@@ -44,3 +44,19 @@ local time. `SbsSource` takes an IANA `tz` (default UTC) or can stamp live
 records with arrival time. SBS altitude is pressure altitude in standard
 Dump1090 output, so it maps to `alt_baro_ft`, with `altitude_field` as an
 override for forks that differ.
+
+## D7. Planespotter schema lives in config, altitude goes to `alt_unknown_ft`
+
+The planespotter schema (table and column names, units, timestamp semantics)
+was not available when the adapter was written, so `PlanespotterConfig`
+describes it and the code assumes nothing. Until the altitude reference is
+verified, `altitude_reference: unknown` writes it to `alt_unknown_ft`.
+
+Read-only is enforced three ways: the adapter only builds `SELECT`
+statements, MySQL sessions are set `READ ONLY` on connect, and the docs
+require a dedicated read-only user. Credentials come from `${VAR}`
+references in the YAML.
+
+Live mode polls the database for rows at least `live_delay_s` old instead of
+using `/flights/stream`, whose format has not been confirmed. Swap it in once
+it is.
