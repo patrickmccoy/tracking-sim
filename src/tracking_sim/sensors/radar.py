@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -40,9 +40,12 @@ from tracking_sim.geo import LocalFrame, SensorSite, radar_horizon_visible
 from tracking_sim.sensors.measurement import CartesianToBearingSlantRange, compass_to_bearing
 from tracking_sim.sensors.scan import BeamSchedule
 from tracking_sim.sensors.spec import RotatingRadar2DSpec
-from tracking_sim.sim.rng import SensorStreams
 from tracking_sim.truth.builder import FlightSegment, TruthSet
 from tracking_sim.truth.record import ensure_utc
+
+if TYPE_CHECKING:
+    # Only a type here; importing tracking_sim.sim at runtime would be circular.
+    from tracking_sim.sim.rng import SensorStreams
 
 __all__ = ["Crossing", "RotatingRadar2D", "ScanResult"]
 
