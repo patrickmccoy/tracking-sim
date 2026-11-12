@@ -4,7 +4,7 @@ Sensor and tracking simulation playground: replay real ADS-B traffic from Dump10
 
 You define a sensor (range, accuracy, scan rate, detection probability), place it on the map, and replay traffic past it. The output is detections, tracks, and scores against truth, so different filters can be compared on identical traffic.
 
-> **Status: milestone 1 (truth) is implemented.** Truth ingestion, cleaning and export to Stone Soup work, and a notebook plots and cross-checks an hour of traffic. Sensors, trackers and scoring come in milestones 2 and 3. See [PROGRESS.md](PROGRESS.md) for exactly what is done and what is next.
+> **Status: milestones 1 (truth) and 2 (one sensor) are implemented.** Truth ingestion, cleaning and export to Stone Soup work, and a simulated rotating 2D radar turns an hour of traffic into realistic detections (noise, slant range, misses, unresolved targets, clutter) from a seed. Trackers and scoring come in milestone 3. See [PROGRESS.md](PROGRESS.md) for exactly what is done and what is next.
 
 - [How it works](#how-it-works)
 - [Getting started](#getting-started)
@@ -25,14 +25,15 @@ Truth enters only through the outputs of a Dump1090-family decoder, so the frame
  ┌───────────────┐   TruthRecord   ┌───────────────┐  GroundTruthPath  ┌──────────────┐  Detection  ┌──────────┐  Track  ┌────────────────┐
  │ Truth sources │ ──────────────▶ │ Truth builder │ ────────────────▶ │ Sensor       │ ──────────▶ │ Trackers │ ──────▶ │ Scoring and UI │
  │ sbs, recording│                 │ clean, smooth │                   │ simulator    │             │ (Stone   │         │ metrics, runs, │
- │               │                 │ ENU, state_at │ ─────────┐        │ (milestone 2)│             │  Soup)   │         │ map            │
+ │               │                 │ ENU, state_at │ ─────────┐        │ 2D radar     │             │  Soup)   │         │ map            │
  └───────────────┘                 └───────────────┘          │        └──────────────┘             └──────────┘         └────────────────┘
-       built                              built               └────────────── truth for scoring ─────────────────────────────────▲
+                                                              └────────────── truth for scoring ──────────────────────────────────▲
+       built                             built                              built                   milestone 3            milestones 3-5
 ```
 
 1. **Truth sources** emit canonical `TruthRecord`s. Every source implements the same `TruthSource` protocol (`replay(start, end)` and `stream()`), so a live Dump1090 feed, a captured SBS file and a recording are interchangeable.
 2. **The truth builder** turns sparse records into clean per-flight segments that can be sampled at any time.
-3. **The sensor simulator** samples those paths at each sensor's scan times and emits noisy detections, misses and false alarms. *(Milestone 2.)*
+3. **The sensor simulator** samples those paths when each sensor's beam crosses each aircraft and emits noisy detections, misses and false alarms as Stone Soup `Detection`s.
 4. **Trackers** are Stone Soup pipelines assembled from config. *(Milestone 3.)*
 5. **Scoring and UI** compare tracks with truth, store runs and display them. *(Milestones 3 to 5.)*
 
@@ -66,6 +67,33 @@ ADS-B is good truth horizontally and weaker vertically, and the design treats bo
 - Barometric altitude can differ from true height by hundreds of feet depending on weather, so every segment records which altitude reference it uses.
 - A live SBS feed carries barometric altitude. An exported SBS file carries whatever its source stored, so until that is known, read it with `--altitude-field alt_unknown_ft`. `tracking-sim compare --altitude` is the tool for settling it; see [DECISIONS.md](DECISIONS.md) (D10).
 
+### The sensor simulator
+
+A sensor is a YAML spec plus a model class. Milestone 2 has one: a rotating 2D surveillance radar (`type: rotating_radar_2d`). The example at [scenarios/sensors/radar-1.yaml](scenarios/sensors/radar-1.yaml) is a terminal-area radar at Rocky Mountain Metropolitan Airport:
+
+```yaml
+id: radar-1
+type: rotating_radar_2d
+position: {lat: 39.9088, lon: -105.1172, alt_m: 1729, mast_m: 15}
+coverage: {range_min_m: 500, range_max_m: 110000, azimuth_deg: [0, 360], elevation_deg: [-1, 30]}
+scan: {period_s: 5.0, beamwidth_deg: 1.5, start_azimuth_deg: 0}
+noise: {range_sigma_m: 60, bearing_sigma_deg: 0.2}
+detection: {model: constant, pd: 0.9, false_alarm_density: 1.0e-9}   # per m² per scan
+resolution: {range_m: 150, bearing_deg: 1.5}
+latency_s: 0.5
+```
+
+`ReplayEngine(truth, [spec], seed=42).run()` replays truth past the radar. For each scan and aircraft it:
+
+1. **Times the observation** to the moment the rotating beam crosses the aircraft, and samples truth then, not at the scan start (at 250 m/s a 5 s scan is over a kilometre of travel).
+2. **Gates on geometry:** slant range limits, azimuth sector, elevation limits, and line of sight on a 4/3 earth from the mast height (the radar horizon).
+3. **Draws a detection** with probability Pd.
+4. **Adds noise** to the measured **slant range** and bearing. A 2D radar measures the straight-line distance to the aircraft, not the ground range, so a high aircraft appears farther out than it is. Trackers have to cope with that, as they would with a real radar.
+5. **Merges** detected aircraft closer together than the resolution cell into one plot.
+6. **Adds false alarms**, a Poisson number per scan spread uniformly over the coverage area.
+
+Detections are Stone Soup `TrueDetection` (linked to the truth path) and `Clutter` objects with `[bearing, slant range]` measurements and a matching measurement model (`CartesianToBearingSlantRange`), so Stone Soup trackers can use them directly. Every beam crossing is also kept as a detection *opportunity*, so achieved Pd can be checked against the configured value. All randomness comes from the run seed, with separate streams per sensor and per purpose: the same seed reproduces a run exactly, adding a sensor doesn't change the others, and changing the clutter density doesn't change which aircraft are detected.
+
 ### Package layout
 
 ```
@@ -74,6 +102,7 @@ src/tracking_sim/
   config.py              # YAML -> Pydantic loading with ${ENV_VAR} expansion
   units.py               # unit constants (SI internally)
   geo/frames.py          # LocalFrame: WGS84 <-> ENU
+  geo/site.py            # SensorSite (a sensor's own frame), 4/3-earth radar horizon
   truth/
     record.py            # TruthRecord
     source.py            # TruthSource protocol
@@ -85,13 +114,22 @@ src/tracking_sim/
     compare.py           # source agreement and altitude reference checks
     recorder.py          # record / export / summary helpers
     synthetic.py         # seeded synthetic traffic for tests and demos
-notebooks/               # 01_truth_playground.ipynb
+  sensors/
+    spec.py              # SensorSpec: Pydantic models loaded from YAML
+    scan.py              # BeamSchedule: when a rotating beam crosses each target
+    measurement.py       # CartesianToBearingSlantRange (Stone Soup measurement model)
+    radar.py             # RotatingRadar2D: gates, Pd, noise, resolution, clutter
+  sim/
+    rng.py               # per-sensor, per-purpose random streams from the run seed
+    engine.py            # ReplayEngine and SimulationResult (stats, tables, Parquet)
+notebooks/               # 01_truth_playground.ipynb, 02_one_sensor.ipynb
+scenarios/sensors/       # example sensor specs
 tools/README.md          # the SBS contract for exporters from other systems
 scripts/make_fixture.py  # regenerates tests/data
 tests/                   # pytest suite; tests/data holds the synthetic fixture
 ```
 
-Later milestones add `sensors/`, `sim/`, `tracking/`, `eval/` and `api/` alongside `truth/`, as laid out in the [design document](Sensor_simulation_playground_design.md).
+Later milestones add `tracking/`, `eval/` and `api/` alongside these, as laid out in the [design document](Sensor_simulation_playground_design.md).
 
 ## Getting started
 
@@ -116,13 +154,17 @@ cd tracking-sim
 uv sync --extra notebook
 ```
 
-This creates `.venv/` with the package, its pinned dependencies (from `uv.lock`), Jupyter and matplotlib.
+This creates `.venv/` with the package, its pinned dependencies (from `uv.lock`), Jupyter, matplotlib and pandas.
 
-**3. Open the notebook:**
+**3. Open the notebooks:**
 
 ```sh
-uv run jupyter lab notebooks/01_truth_playground.ipynb
+uv run jupyter lab notebooks/
 ```
+
+Start with `01_truth_playground.ipynb`, then `02_one_sensor.ipynb`.
+
+#### Notebook 01: truth playground
 
 Run all cells. With no other setup it uses the synthetic one-hour fixture in `tests/data/`, so it works offline with no receiver or database. You'll see:
 
@@ -133,6 +175,20 @@ Run all cells. With no other setup it uses the synthetic one-hour fixture in `te
 5. The same aircraft checked against a second source, with per-aircraft agreement against the 30 m truth sigma.
 6. An assessment of whether the second source's altitude is barometric or geometric.
 7. The Stone Soup `GroundTruthPath` export.
+
+#### Notebook 02: one sensor
+
+It replays the same hour past the example radar (`scenarios/sensors/radar-1.yaml`) with seed 42. You'll see:
+
+1. The run summary: scans, beam crossings, how many were gated and why, achieved Pd against the configured 0.9, and false alarms per scan.
+2. A PPI view of an hour of detections over truth, with clutter, and one aircraft's measured slant range against its true slant and ground range.
+3. Range and bearing errors against the configured noise.
+4. Achieved Pd by range with confidence intervals.
+5. False alarms per scan against their Poisson distribution.
+6. The same seed reproducing every detection, and a different seed changing only the random draws.
+7. The Stone Soup `TrueDetection` and `Clutter` objects a tracker will receive.
+
+Try editing the radar spec (Pd, noise, clutter density, range, mast height) or setting `TRACKING_SIM_SENSOR` to your own spec and re-running.
 
 If you prefer VS Code or another editor, open the notebook there and choose the `.venv` interpreter in the repo as the kernel.
 
@@ -249,6 +305,21 @@ async def main():
 asyncio.run(main())
 ```
 
+To simulate a radar:
+
+```python
+from tracking_sim.sensors import load_sensor_spec
+from tracking_sim.sim import ReplayEngine
+
+spec = load_sensor_spec("scenarios/sensors/radar-1.yaml")
+result = ReplayEngine(truth, [spec], seed=42).run()  # or run(start, end)
+print(result.summary())  # achieved Pd, gates, false alarms
+detections = result.detections()  # Stone Soup TrueDetection / Clutter, in time order
+result.write("runs/radar-1-seed-42")  # detections.parquet, opportunities.parquet
+```
+
+`ReplayEngine.scans()` yields the same thing one scan at a time, across all sensors in time order.
+
 To generate synthetic traffic for experiments (any origin, any seed):
 
 ```python
@@ -270,11 +341,13 @@ Nothing site-specific lives in code. Hosts, ports, credentials and locations com
 | `TRACKING_SIM_SBS_TZ` | `record sbs`, `export sbs`, notebook | Time zone of SBS timestamps (default UTC) |
 | `TRACKING_SIM_RECEIVER` | `record sbs`, `export sbs` | Receiver name; records get `source_id` `sbs:<name>` |
 | `TRACKING_SIM_RECORDING` | notebook | Recording (file, directory or glob) or SBS capture |
-| `TRACKING_SIM_SECOND` | notebook | Second source for section 5, recording or SBS |
+| `TRACKING_SIM_SECOND` | notebook 01 | Second source for section 5, recording or SBS |
 | `TRACKING_SIM_ORIGIN` | notebook | `LAT,LON[,ALT_M]` of the local frame |
-| `TRACKING_SIM_WINDOW` | notebook | `START,END` in ISO 8601 |
+| `TRACKING_SIM_WINDOW` | notebook 01 | `START,END` in ISO 8601 |
+| `TRACKING_SIM_SENSOR` | notebook 02 | Sensor spec YAML (default `scenarios/sensors/radar-1.yaml`) |
+| `TRACKING_SIM_SEED` | notebook 02 | Run seed (default 42) |
 
-Truth builder settings live in `TruthBuilderConfig` (a Pydantic model): segment gap, speed gate, default truth sigma, altitude preference, smoothing method, and whether to drop aircraft on the ground.
+Sensors are YAML specs (above; every field is validated, and `${VAR}` references are expanded). Truth builder settings live in `TruthBuilderConfig` (a Pydantic model): segment gap, speed gate, default truth sigma, altitude preference, smoothing method, and whether to drop aircraft on the ground.
 
 ## Development
 
@@ -302,7 +375,7 @@ Conventions, from the design document:
 | Milestone | Delivers |
 | --- | --- |
 | 1. Truth | SBS ingest, exporter contract, truth builder, Stone Soup ground truth, notebook. **Implemented** (altitude verdict pending real data). |
-| 2. One sensor | `SensorSpec` YAML, rotating 2D radar with beam-crossing timing, noise, Pd, false alarms and radar horizon; seeded replay engine. |
+| 2. One sensor | `SensorSpec` YAML, rotating 2D radar with beam-crossing timing, slant-range and bearing noise, Pd, resolution, false alarms and radar horizon; seeded replay engine; notebook. **Implemented.** |
 | 3. Tracking and metrics | Tracker factory from config (EKF + GNN baseline, UKF, multiple-model); OSPA, GOSPA and SIAP; one-command comparison table. |
 | 4. Scenarios and realism | Scenario files and an immutable run store, terrain masking, radar-equation Pd, `aircraft_json` adapter, passive bearing-only sensor. |
 | 5. Map playground | FastAPI service and a MapLibre map UI to place sensors and replay runs. |

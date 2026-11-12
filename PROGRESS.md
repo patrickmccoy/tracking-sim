@@ -43,9 +43,9 @@ stand-in. Pointing `TRACKING_SIM_SECOND` at a planespotter SBS export runs
 it on real data, which has not been tried yet because no database was
 reachable.
 
-## Next
+### Open: closing milestone 1 on real data
 
-To close milestone 1 on real data:
+These wait on real recordings and the planespotter SBS exporter:
 
 1. Write the SBS exporter in the planespotter repository, following
    `tools/README.md`.
@@ -88,13 +88,41 @@ No CLI command yet; `tracking-sim run` waits for scenario files (milestone 4).
 
 Status:
 
-- [ ] `SensorSpec` and YAML loading
-- [ ] Rotating 2D radar with beam-crossing timing, range and bearing noise,
-  constant Pd, false alarms, radar horizon
-- [ ] Seeded replay engine
+- [x] `SensorSpec` and YAML loading (`scenarios/sensors/radar-1.yaml` is the example)
+- [x] Rotating 2D radar with beam-crossing timing, slant range and bearing
+  noise, constant Pd, resolution, false alarms, radar horizon
+- [x] Seeded replay engine, with detections and opportunities to Parquet
 
-Done when detections plot over truth, achieved Pd matches the configured
-value within sampling error, and two runs with one seed are identical.
+Done-when check: `notebooks/02_one_sensor.ipynb` plots an hour of
+detections over truth; the achieved Pd is 0.893 against the configured 0.9
+(95% interval 0.881-0.905, and flat across range); false alarms average
+38.0 per scan against 38.0 expected; and the same seed reproduces every
+detection. Tests assert the same with a 99.9% interval. An hour of traffic
+simulates in about two seconds. As with milestone 1, this is on the
+synthetic fixture until real recordings are available.
+
+Decisions are D12-D17 in DECISIONS.md.
+
+## Next: milestone 3, tracking and metrics
+
+From the design: a tracker factory from config with the baseline (extended
+Kalman filter, constant velocity, global nearest neighbour), a second and
+third tracker (unscented, multiple-model) for comparison, and OSPA, GOSPA
+and SIAP metrics; done when one command runs a scenario with three
+trackers and prints a comparison table. Write the plan and get it approved
+before coding.
+
+Things milestone 2 leaves for it:
+
+- Detections are in `[bearing, slant range]` with
+  `CartesianToBearingSlantRange`; initiators need a height guess
+  (`inverse_height_m`) or a 3D-aware initiation, since a 2D radar does not
+  measure altitude. The state is still 6D ENU.
+- Each detection has a measurement time (`timestamp`) and a report time
+  (`metadata["report_time"]`, adding the sensor latency). Trackers should
+  consume them in report-time order but update at measurement time.
+- The "one command" needs a CLI and probably a minimal scenario file before
+  milestone 4's full scenario format; agree the shape in the plan.
 
 ## Notes for the next session
 

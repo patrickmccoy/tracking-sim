@@ -147,3 +147,80 @@ Consequences:
   altitude.
 * Live mode for planespotter (database polling) is gone; live truth comes
   from the receiver.
+
+## D12. The 2D radar measures slant range, in Stone Soup's conventions
+
+Decided with the milestone 2 plan: real 2D surveillance radars measure the
+straight-line distance to an aircraft, so the simulated one does too, and
+trackers see the resulting altitude-dependent range error (about 500 m for
+an aircraft 10 km up at 100 km) as they would with real data. Stone Soup's
+`CartesianToBearingRange` measures ground range, so
+`CartesianToBearingSlantRange` keeps its `[bearing, range]` layout and its
+bearing convention (counter-clockwise from the sensor's east, a `Bearing`)
+but measures 3D range from the antenna. Using Stone Soup's conventions
+rather than compass azimuth means its filters, initiators and metrics work
+unchanged in milestone 3; compass azimuth lives in metadata and tables for
+people. The Jacobian is Stone Soup's numerical default.
+`inverse_function` needs a height a 2D radar does not measure, so it takes
+an assumed one (`inverse_height_m`).
+
+## D13. Each sensor measures in its own frame, related to the scenario frame exactly
+
+Bearings are measured from the sensor's own north. Far from the scenario
+origin, meridian convergence rotates that north by a bearing-noise-sized
+angle (about 0.3 degrees at 50 km east at 40 degrees N), so `SensorSite`
+holds the exact rotation between the two ENU frames (both are rotations of
+ECEF) instead of assuming they are parallel. The sensor's ground height
+uses the same reference as truth altitudes (the builder treats reported
+altitude as height above the ellipsoid); the geoid offset between that and
+MSL is the same for both and cancels.
+
+The radar horizon is the textbook 4/3-earth formula, with the target's
+height above the site's ground taken from the sensor frame plus the
+`d^2 / 2R` curvature drop. The elevation gate uses geometric elevation;
+refraction raises apparent elevation by a few hundredths of a degree at
+these ranges, which is ignored.
+
+## D14. Observations are timed to the beam crossing
+
+A rotating radar sees an aircraft when its beam crosses it, up to a full
+period after the scan starts: over a kilometre at 250 m/s on a 5 s scan.
+`BeamSchedule` finds crossings where the beam's phase relative to the
+target is an integer, on a grid of the target's unwrapped azimuth, then
+refines them by fixed-point iteration against the real trajectory. Scan
+windows are fixed periods from the run start, so an aircraft near the
+start azimuth moving against the beam can be crossed twice in one window
+(and one moving with it, in none), as on a real radar. Crossings of the
+same aircraft are always close to a period apart.
+
+## D15. Detection draws, resolution and false alarms
+
+- Pd and noise are drawn for every opportunity (a crossing that passed the
+  geometry gates), detected or not, in time order, so one target's noise
+  does not depend on another's detection.
+- Achieved Pd counts opportunities, not detections: targets merged by the
+  resolution cell each count as detected. That makes it directly comparable
+  with the configured Pd, which is what milestone 2 checks.
+- Unresolved targets (closer than the cell in both slant range and azimuth,
+  single linkage on true values) give one plot at the mean of their noisy
+  measurements, linked to the first of them, with all of them listed.
+- False alarms are Poisson per scan with mean `density x area`, uniform over
+  the coverage area in (azimuth, slant range), and timed to the beam.
+- Segments without altitude are skipped, and the skips reported: slant
+  range and the horizon depend on height, and the builder places such
+  segments at the frame origin's height, which would be wrong for a radar.
+
+## D16. Random streams per sensor and per purpose
+
+`sensor_streams(seed, sensor_id)` seeds a `SeedSequence` with the run seed
+and a CRC of the sensor id, and spawns separate generators for detection
+draws, noise and clutter. The same seed reproduces a run; adding or
+reordering sensors leaves each sensor's draws alone; and changing one
+purpose's parameters (say, clutter density) leaves the other draws as they
+were, so two configurations can be compared on common random numbers.
+
+## D17. pandas joins the notebook extra
+
+The notebooks do enough table work (grouping, binning) that pandas reads
+more plainly than Arrow compute. It is only in the `notebook` extra; the
+package itself stays on NumPy and PyArrow.
