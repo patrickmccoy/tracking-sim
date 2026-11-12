@@ -1,0 +1,48 @@
+# Milestone 4's realism in one scenario: real terrain, a radar behind the
+# first foothills ridge west of KBJC with radar-equation Pd, a passive
+# bearing-only sensor at KBJC, and the three trackers.
+#
+#   uv sync --extra terrain     # reading Copernicus DEM tiles
+#   uv run tracking-sim run scenarios/kbjc-terrain.yaml
+#
+# The first run downloads about 57 MB of Copernicus GLO-90 tiles into
+# ~/.cache/tracking-sim (or $TRACKING_SIM_CACHE). Trackers use the radar's
+# detections; the passive sensor's bearings wait for fusion (milestone 6).
+name: kbjc-terrain
+origin: {lat: 39.9088, lon: -105.1172, alt_m: 1729}
+truth:
+  source: recording
+  path: ../tests/data/synthetic_1h.parquet
+  window: ["2026-11-01T23:00:00Z", "2026-11-02T00:00:00Z"]
+  # aircraft_classes: aircraft-classes.csv   # optional icao24,class table
+terrain:
+  source: copernicus
+  resolution_m: 90               # or 30 (GLO-30, about 460 MB here)
+sensors:
+  - id: radar-ridge
+    type: rotating_radar_2d
+    position: {lat: 39.92, lon: -105.29, alt_m: 2290, mast_m: 15}
+    coverage: {range_min_m: 500, range_max_m: 110000, elevation_deg: [-2, 30]}
+    scan: {period_s: 5.0, beamwidth_deg: 1.5}
+    noise: {range_sigma_m: 60, bearing_sigma_deg: 0.2}
+    detection:
+      model: radar_equation
+      reference_snr_db: 13       # a 1 m^2 target at 50 km gives 13 dB
+      reference_range_m: 50000
+      pfa: 1.0e-6
+      swerling: 1
+      false_alarm_density: 1.0e-9
+    resolution: {range_m: 150, bearing_deg: 1.5}
+    latency_s: 0.5
+  - id: esm-kbjc
+    type: passive_bearing
+    position: {lat: 39.9088, lon: -105.1172, alt_m: 1713, mast_m: 10}
+    coverage: {range_max_m: 150000, elevation_deg: [-2, 60]}
+    update_period_s: 1.0
+    noise: {bearing_sigma_deg: 1.0}
+    detection: {model: one_way, reference_snr_db: 20, reference_range_m: 60000, false_alarm_rate: 0.5}
+trackers:
+  - trackers/ekf-cv-gnn.yaml
+  - trackers/ukf-cv-gnn.yaml
+  - trackers/pf-mm-gnn.yaml
+seed: 42

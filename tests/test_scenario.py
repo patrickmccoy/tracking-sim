@@ -99,3 +99,11 @@ def test_bad_scenarios_fail(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="unique"):
         load_scenario(dup)
+
+
+def test_terrain_example_scenario_loads() -> None:
+    scenario = load_scenario(ROOT / "scenarios/kbjc-terrain.yaml")
+    assert [s.type for s in scenario.sensors] == ["rotating_radar_2d", "passive_bearing"]
+    assert scenario.spec.terrain is not None and scenario.spec.terrain.source == "copernicus"
+    assert scenario.sensors[0].detection.model == "radar_equation"
+    assert len(scenario.trackers) == 3
