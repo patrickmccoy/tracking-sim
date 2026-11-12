@@ -1,7 +1,8 @@
 """The ``TruthSource`` protocol shared by every truth adapter.
 
 The rest of the package depends only on this protocol, never on a specific
-adapter, so a Dump1090 feed, a recording and planespotter are interchangeable.
+adapter, so a live Dump1090 feed, a captured SBS file and a recording are
+interchangeable.
 """
 
 from __future__ import annotations

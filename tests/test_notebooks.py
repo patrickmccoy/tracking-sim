@@ -18,7 +18,8 @@ def test_notebook_runs(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "TRACKING_SIM_RECORDING",
         "TRACKING_SIM_ORIGIN",
         "TRACKING_SIM_WINDOW",
-        "TRACKING_SIM_PLANESPOTTER",
+        "TRACKING_SIM_SECOND",
+        "TRACKING_SIM_SBS_TZ",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("MPLBACKEND", "Agg")

@@ -10,7 +10,6 @@ Variable                        Used for
 ``TRACKING_SIM_SBS_PORT``       BaseStation port (default 30003)
 ``TRACKING_SIM_SBS_TZ``         Receiver time zone of SBS timestamps
 ``TRACKING_SIM_RECEIVER``       Receiver name used in ``source_id``
-``TRACKING_SIM_PLANESPOTTER``   Path to a planespotter YAML config
 ==============================  =======================================
 """
 
@@ -96,32 +95,17 @@ def _run_record(args: argparse.Namespace, make_source: Callable[[], TruthSource]
     return 0
 
 
-def _planespotter_source(args: argparse.Namespace) -> TruthSource:
-    if not args.config:
-        raise SystemExit("planespotter: give --config or set TRACKING_SIM_PLANESPOTTER")
-    from tracking_sim.truth.sources.planespotter import PlanespotterSource
-
-    return PlanespotterSource.from_yaml(args.config)
-
-
 def _cmd_record_sbs(args: argparse.Namespace) -> int:
     return _run_record(args, lambda: _sbs_source(args))
 
 
-def _cmd_record_planespotter(args: argparse.Namespace) -> int:
-    return _run_record(args, lambda: _planespotter_source(args))
-
-
 def _cmd_export(args: argparse.Namespace) -> int:
-    if args.source == "sbs":
-        source: TruthSource = SbsSource(
-            path=args.paths,
-            receiver=args.receiver,
-            tz=args.tz,
-            altitude_field=args.altitude_field,
-        )
-    else:
-        source = _planespotter_source(args)
+    source = SbsSource(
+        path=args.paths,
+        receiver=args.receiver,
+        tz=args.tz,
+        altitude_field=args.altitude_field,
+    )
     start = parse_time(args.start) if args.start else None
     end = parse_time(args.end) if args.end else None
     with RecordingWriter(args.out) as writer:
@@ -195,34 +179,26 @@ def build_parser() -> argparse.ArgumentParser:
     _add_record_limits(sbs)
     sbs.set_defaults(func=_cmd_record_sbs)
 
-    live_ps = record_sources.add_parser(
-        "planespotter", help="poll a planespotter database (needs the planespotter extra)"
-    )
-    _add_planespotter_options(live_ps)
-    _add_output_options(live_ps)
-    _add_record_limits(live_ps)
-    live_ps.set_defaults(func=_cmd_record_planespotter)
-
     export = commands.add_parser(
-        "export", help="copy a time window from a replay source into a recording file"
+        "export", help="convert a time window of captured SBS files into a recording file"
     )
     export_sources = export.add_subparsers(dest="source", required=True)
     export_sbs = export_sources.add_parser("sbs", help="captured SBS-1 text files")
     export_sbs.add_argument("paths", nargs="+", type=Path, help="SBS files (plain or .gz)")
     _add_sbs_options(export_sbs)
-    export_ps = export_sources.add_parser("planespotter", help="a planespotter database")
-    _add_planespotter_options(export_ps)
-    for sub in (export_sbs, export_ps):
-        sub.add_argument("--start", help="ISO 8601 start time (inclusive, default: open)")
-        sub.add_argument("--end", help="ISO 8601 end time (exclusive, default: open)")
-        _add_output_options(sub)
-        sub.set_defaults(func=_cmd_export)
+    export_sbs.add_argument("--start", help="ISO 8601 start time (inclusive, default: open)")
+    export_sbs.add_argument("--end", help="ISO 8601 end time (exclusive, default: open)")
+    _add_output_options(export_sbs)
+    export_sbs.set_defaults(func=_cmd_export)
 
     compare = commands.add_parser(
         "compare",
         help="check two recordings agree on the same aircraft (and test altitude reference)",
     )
-    compare.add_argument("candidate", help="recording under test, e.g. a planespotter export")
+    compare.add_argument(
+        "candidate",
+        help="recording under test, e.g. from a second receiver or an exported database",
+    )
     compare.add_argument("reference", help="reference recording, e.g. from record sbs")
     compare.add_argument(
         "--origin", help="LAT,LON[,ALT_M] of the local frame (default: reference centroid)"
@@ -246,14 +222,6 @@ def build_parser() -> argparse.ArgumentParser:
     info.add_argument("--end", help="ISO 8601 end time (exclusive)")
     info.set_defaults(func=_cmd_info)
     return parser
-
-
-def _add_planespotter_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--config",
-        default=_env("TRACKING_SIM_PLANESPOTTER"),
-        help="planespotter YAML config (see scenarios/truth/planespotter.example.yaml)",
-    )
 
 
 def _add_sbs_options(sbs: argparse.ArgumentParser) -> None:

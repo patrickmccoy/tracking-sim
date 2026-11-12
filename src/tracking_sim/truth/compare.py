@@ -2,15 +2,16 @@
 
 Two uses:
 
-* **Agreement.** Milestone 1 is done when the same aircraft from a
-  recording and from planespotter agree within the truth sigma.
+* **Agreement.** Milestone 1 is done when the same aircraft from two
+  independent sources (two receivers, or a receiver and an SBS export from a
+  database) agree within the truth sigma.
   ``compare_truth`` samples both smoothed trajectories on a common time grid
   and reports the horizontal and vertical differences per aircraft.
-* **Altitude reference.** Planespotter's stored altitude is believed to be
-  barometric but is unverified. ``assess_altitude_reference`` compares a
-  candidate source's altitude against a reference source's barometric and,
-  if present, geometric altitude for the same aircraft and times, and says
-  which one it tracks.
+* **Altitude reference.** A source that was not decoded live, such as an SBS
+  file exported from a database, may carry barometric or geometric altitude.
+  ``assess_altitude_reference`` compares a candidate source's altitude
+  against a reference source's barometric and, if present, geometric
+  altitude for the same aircraft and times, and says which one it tracks.
 """
 
 from __future__ import annotations
@@ -228,8 +229,8 @@ def assess_altitude_reference(
 ) -> AltitudeAssessment:
     """Decide whether ``candidate``'s altitude is barometric or geometric.
 
-    ``candidate`` is the source under test (for example a planespotter
-    export, altitude in ``alt_unknown_ft``). ``reference`` should come from a
+    ``candidate`` is the source under test (for example an SBS export from a
+    database, read with ``altitude_field="alt_unknown_ft"``). ``reference`` should come from a
     receiver that reports barometric altitude (any SBS feed) and ideally
     geometric altitude too (``aircraft.json``), for the same aircraft and
     time window.

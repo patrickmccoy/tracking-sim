@@ -23,8 +23,6 @@ dependencies = [
 tracking-sim = "tracking_sim.cli:main"
 
 [project.optional-dependencies]
-# Read-only access to a planespotter MySQL/Percona database.
-planespotter = ["sqlalchemy>=2.0", "pymysql>=1.1"]
 # Running and plotting from the notebooks.
 notebook = ["jupyterlab>=4.2", "matplotlib>=3.8", "nbclient>=0.10", "ipykernel>=6.29"]
 

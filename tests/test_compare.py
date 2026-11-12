@@ -14,7 +14,7 @@ from tracking_sim.truth.synthetic import ReceiverConfig, SyntheticTraffic, gener
 @pytest.fixture(scope="module")
 def traffic() -> SyntheticTraffic:
     # A reference receiver that reports baro and geometric altitude (like
-    # aircraft.json), and two planespotter-like sources with an unknown
+    # aircraft.json), and two exported-database-like sources with an unknown
     # altitude field: one really barometric, one really geometric.
     return generate_traffic(
         seed=3,
