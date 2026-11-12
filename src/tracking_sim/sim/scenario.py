@@ -221,6 +221,39 @@ class Scenario:
         other._terrain = self._terrain
         return other
 
+    def with_truth(
+        self,
+        path: str | Path,
+        *,
+        window: tuple[datetime, datetime] | None = None,
+        tz: str | None = None,
+    ) -> Scenario:
+        """The same sensors and trackers on another truth file, such as a capture.
+
+        ``path`` is a recording or an SBS capture (by its ``.sbs`` suffix);
+        ``window`` limits it, and ``None`` uses all of it. ``tz`` is the SBS
+        time zone (default: the scenario's).
+        """
+        from tracking_sim.truth.sources import is_sbs_capture
+
+        truth = TruthSpec.model_validate(
+            {
+                **self.spec.truth.model_dump(),
+                "source": "sbs" if is_sbs_capture(path) else "recording",
+                "path": str(Path(path).resolve()),
+                "window": window,
+                "tz": tz or self.spec.truth.tz,
+            }
+        )
+        other = Scenario(
+            spec=self.spec.model_copy(update={"truth": truth}),
+            base_dir=self.base_dir,
+            sensors=self.sensors,
+            trackers=self.trackers,
+        )
+        other._terrain = self._terrain
+        return other
+
     def resolved(self) -> dict[str, Any]:
         """The full configuration, every referenced file inlined."""
         return {

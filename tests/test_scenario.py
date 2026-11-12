@@ -107,3 +107,32 @@ def test_terrain_example_scenario_loads() -> None:
     assert scenario.spec.terrain is not None and scenario.spec.terrain.source == "copernicus"
     assert scenario.sensors[0].detection.model == "radar_equation"
     assert len(scenario.trackers) == 3
+
+
+def test_with_truth_swaps_in_a_capture(small_scenario: Path, tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from tracking_sim.sim.scenario import _load_truth
+    from tracking_sim.truth.sources import is_sbs_capture, open_recording
+    from tracking_sim.truth.sources.recording import RecordingSource
+    from tracking_sim.truth.sources.sbs import SbsSource
+
+    sbs = ROOT / "tests/data/synthetic_5min.sbs"
+    assert is_sbs_capture(sbs) and is_sbs_capture("feed.sbs.gz")
+    assert not is_sbs_capture(ROOT / "tests/data/synthetic_1h.parquet")
+    assert isinstance(open_recording(sbs), SbsSource)
+    assert isinstance(open_recording(ROOT / "tests/data/synthetic_1h.parquet"), RecordingSource)
+
+    scenario = load_scenario(small_scenario)
+    capture = scenario.with_truth(sbs)
+    # Same sensors and trackers; the capture's own time span, not the scenario's window.
+    assert capture.spec.truth.source == "sbs" and capture.spec.truth.window is None
+    assert capture.truth_path == sbs.resolve() and capture.sensors == scenario.sensors
+    assert capture.spec.seed == scenario.spec.seed
+    assert capture.input_digests()["truth"] != scenario.input_digests()["truth"]
+    assert len(_load_truth(capture)) > 0
+
+    window = (datetime(2026, 11, 1, 23, 1, tzinfo=UTC), datetime(2026, 11, 1, 23, 2, tzinfo=UTC))
+    assert scenario.with_truth(sbs, window=window).spec.truth.window == window
+    with pytest.raises(ValueError, match="end after"):
+        scenario.with_truth(sbs, window=(window[1], window[0]))
