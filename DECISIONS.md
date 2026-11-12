@@ -224,3 +224,96 @@ were, so two configurations can be compared on common random numbers.
 The notebooks do enough table work (grouping, binning) that pandas reads
 more plainly than Arrow compute. It is only in the `notebook` extra; the
 package itself stays on NumPy and PyArrow.
+
+## D18. The multiple-model tracker is Stone Soup's particle filter
+
+Decided with the milestone 3 plan. Stone Soup 1.9.1 has no Kalman-based
+IMM; its multiple-model support is `MultiModelPredictor` and
+`MultiModelParticleUpdater`. The tracker uses them with two models,
+constant velocity and a coordinated turn (constant velocity vertically),
+switching with probability 0.05 per update.
+
+Stone Soup sets state dimensions a model doesn't map to zero, and
+`ConstantTurn` works on `[x, vx, y, vy, w]`, so this tracker's state is
+`[x, vx, y, vy, w, z, vz]`; the constant-velocity model maps every
+dimension but `w`, so straight-flying particles hold zero turn rate.
+Detections are re-wrapped with 7D copies of the sensor's measurement model
+(`TrackerPipeline.adapt`). Tentative tracks run on an EKF with the same
+layout, and particles (1,000) are sampled only when a track is confirmed,
+which keeps the hundreds of clutter-born tentative tracks cheap.
+
+## D19. Tracks carry height with a vague prior; metrics are horizontal
+
+Decided with the plan: trackers keep a full 3D state although the 2D radar
+measures no height. `SlantRangeInitiator` places a new track 5,000 m above
+the antenna with 3,000 m of uncertainty and linearises position in
+(bearing, slant range, height), so the height guess shows up as
+ground-range uncertainty near the radar, where it matters, instead of
+Stone Soup's default, which would give height almost no variance. Slant
+range barely informs height afterwards, so it mostly stays near the prior,
+and a wrong guess leaves a ground-range bias of a few hundred metres at
+short range (visible in notebook 03). All metrics are therefore on
+horizontal position.
+
+## D20. Particle randomness is seeded by content, not call order
+
+The plan said to seed numpy's global state before each tracker. That isn't
+enough: Stone Soup's particle predictor, resampler and measurement
+prediction draw from global state in call order, and in a multi-target
+tracker that order follows set iteration over tracks, which depends on
+memory addresses. `tracking.particle` gives every draw its own generator,
+seeded from the run seed and the content being drawn for (particle state,
+time), so tracks depend only on seed and data. The measurement prediction
+used for gating is computed without a random noise draw, with the
+measurement noise added to its covariance instead. Nothing uses numpy's
+global random state.
+
+## D21. A geometric pre-gate in front of Stone Soup's hypothesiser
+
+`DistanceHypothesiser` evaluates every track-detection pair in Python;
+with about 38 false alarms a scan, each starting a tentative track, that
+made an hour of tracking take tens of minutes. `PreGatedHypothesiser`
+first drops detections outside a generous box around each track's
+extrapolated position in (bearing, slant range): 2 km, plus 3 sigma of the
+track's position, plus 400 m/s times the time since its last state. The
+exact gate is still Stone Soup's Mahalanobis distance, and a test shows
+identical tracks with and without the pre-gate (about 30x faster with).
+
+## D22. Scoring: coverage-only truth on a scan grid, reported tracks only
+
+Decided with the plan: trackers are scored only on aircraft the radar
+could see. Metrics need common timestamps, so both sides go on the end of
+every scan of the first sensor:
+
+- truth counts at a scan end if the aircraft had a detection opportunity
+  (a crossing that passed every geometry gate) in that scan, at its true
+  state then; each continuous stretch of visibility is a separate truth
+  path (`<segment>#<n>`), because Stone Soup's SIAP assumes truth exists
+  throughout an association, and an aircraft re-entering coverage is a new
+  object to the radar;
+- a track counts from its confirmation (the states before it belong to the
+  tentative track) to its last state, reporting its latest state
+  extrapolated at constant velocity to the scan end.
+
+With several sensors the grid is still the first sensor's scans; revisit
+in milestone 6.
+
+## D23. Metric settings
+
+OSPA and GOSPA use a 1 km cut-off with p = 1 (GOSPA's alpha = 2, so it
+splits into localisation, missed and false parts). SIAP pairs tracks with
+truth by `TrackToTruth` within 1 km for 3 consecutive grid times (ending
+after 2 misses). Track latency is per visibility stretch, from its first
+grid time to the start of its first association; stretches never
+associated are counted as "never tracked" rather than given an infinite
+latency. These are scenario settings (`metrics:`).
+
+## D24. A minimal scenario file and `tracking-sim run`
+
+Decided with the plan: the done-when command takes a scenario YAML using a
+subset of the design's format (name, origin, truth source/path/window,
+sensor and tracker spec files, seed, metrics), with paths relative to the
+file, so milestone 4 extends it rather than replacing it. `--out` writes a
+plain directory (resolved config, detections, opportunities, tracks per
+tracker, metrics.json, the table); the immutable, hash-addressed run store
+is milestone 4.

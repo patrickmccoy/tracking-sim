@@ -158,12 +158,60 @@ with `CartesianToBearingSlantRange`, which needs a height guess
 
 Status:
 
-- [ ] Tracker factory from config, with the baseline tracker
-- [ ] A second and third tracker (unscented, multiple-model) for comparison
-- [ ] OSPA, GOSPA, and SIAP metrics
+- [x] Tracker factory from config, with the baseline tracker
+- [x] A second and third tracker (unscented, multiple-model) for comparison
+- [x] OSPA, GOSPA, and SIAP metrics (plus track latency)
 
-Done when one command runs a scenario with three trackers and prints a
-comparison table.
+Done-when check: `uv run tracking-sim run scenarios/kbjc-synthetic.yaml`
+runs the hour fixture past radar-1 with all three trackers in about a
+minute and prints:
+
+```
+tracker     run s  tracks  OSPA m  GOSPA   loc  missed  false  complete  ambig  spurious  pos acc m  longest  latency s  never
+ekf-cv-gnn   15.3      65     445   1532  1106     201    226      0.89   1.00      0.12        341     0.66         10      2
+ukf-cv-gnn   16.0      59     470   1653  1163     232    258      0.87   1.00      0.14        363     0.65         12      1
+pf-mm-gnn    23.7      56     542   1854  1255     320    278      0.82   1.00      0.16        415     0.67         15      1
+```
+
+`notebooks/03_tracking.ipynb` shows the same with plots. Synthetic data
+again, so read the numbers as a working pipeline rather than a verdict on
+the filters. What they show so far:
+
+- The constant-velocity EKF has the lowest OSPA on this traffic; the UKF is
+  close behind.
+- The particle filter makes no false tracks (versus 10 each) and loses the
+  manoeuvring aircraft less often (8 tracks on it versus 11-12), but its
+  localisation is worse: 1,000 particles over a 7D state with a 3 km height
+  spread is thin.
+- Every tracker has a few hundred metres of error even in straight flight,
+  mostly ground-range bias from the assumed 5,000 m height (D19).
+- All three fragment tracks in turns: tuning (process noise, gate,
+  particle count) is the obvious next experiment, and is now a config
+  change.
+
+Decisions are D18-D24 in DECISIONS.md. Plan changes made along the way:
+particle draws are seeded by content rather than through numpy's global
+state (D20), and a geometric pre-gate keeps clutter affordable (D21).
+
+The test suite now takes about three minutes with the notebook extra,
+mostly notebook 03 running the full hour.
+
+## Next: milestone 4, scenarios and realism
+
+From the design: scenario files and the immutable run store, terrain
+masking from a DEM, radar-equation Pd with RCS classes, the
+`aircraft_json` adapter, and a second sensor type (passive bearing-only);
+done when moving a radar behind a ridge visibly removes low-altitude
+detections on that bearing. Write the plan and get it approved before
+coding. Things milestone 3 leaves for it:
+
+- The scenario format (`tracking_sim.sim.scenario`) is a deliberate subset;
+  extend it rather than replacing it, and turn `--out` directories into the
+  run store.
+- The scoring grid uses the first sensor's scans (D22); a second sensor
+  type needs a rule for that.
+- `aircraft_json` brings geometric altitude: a chance to score heights and
+  to replace the assumed-height prior where a sensor has height.
 
 ## Notes for the next session
 
