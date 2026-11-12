@@ -17,7 +17,7 @@ jobs:
       - run: uv run mypy
 
   # The core package must install and pass tests with no extras, no database
-  # and no network. Tests for optional adapters skip themselves here.
+  # and no network. The notebook test skips itself here.
   test-core:
     runs-on: ubuntu-latest
     strategy:

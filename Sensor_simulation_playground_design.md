@@ -17,7 +17,7 @@ In scope:
 
 Out of scope:
 
-- Changes to planespotter. It is one optional truth source, read-only, with no shared code
+- Reading databases or other trackers' stores directly. Truth enters only through Dump1090 decoder outputs; other systems, such as a planespotter database, reach the framework through exporters, maintained with those systems, that write SBS (see Truth sources)
 - Decoding RF. Dump1090 or a compatible decoder (readsb, dump1090-fa) does that
 - Real sensor hardware integration
 
@@ -25,7 +25,7 @@ Out of scope:
 
 The system is a one-way pipeline of five stages, and each stage talks to the next only through a defined data type. The core never imports a specific truth source.
 
-1. **Truth sources** emit canonical truth records from Dump1090, planespotter, or a recording.
+1. **Truth sources** emit canonical truth records from Dump1090 decoder output (SBS-1 text, and later `aircraft.json` and Beast frames), live or captured, or from a recording made from it.
 2. **Truth builder** turns records into clean per-flight paths that can be sampled at any time.
 3. **Sensor simulator** samples those paths at each sensor's scan times and emits noisy detections, misses, and false alarms.
 4. **Trackers** are Stone Soup pipelines that consume detections and emit tracks.
@@ -40,8 +40,7 @@ src/tracking_sim/
   truth/
     record.py        # canonical TruthRecord
     source.py        # TruthSource protocol
-    sources/         # sbs.py, beast.py, aircraft_json.py,
-                     # recording.py, planespotter.py (optional extra)
+    sources/         # sbs.py, beast.py, aircraft_json.py, recording.py
     builder.py       # segment, smooth, resample
   geo/               # frames (WGS84 <-> ENU), horizon, terrain LOS
   sensors/
@@ -53,23 +52,27 @@ src/tracking_sim/
   eval/              # metrics, run store
   api/               # FastAPI (milestone 5)
 scenarios/           # YAML scenario and sensor definitions
+tools/               # README.md: the SBS contract for exporters
 notebooks/
 tests/
 ```
 
 ## Truth sources
 
-Every source implements one `TruthSource` protocol and emits the same `TruthRecord`, so a raw Dump1090 feed and planespotter are interchangeable. The Dump1090 adapters are the primary, public path; the planespotter adapter is an optional extra installed separately.
+Truth enters the framework only through the outputs of a Dump1090-family decoder (dump1090, dump1090-fa, readsb), which anyone with a receiver has. SBS-1 BaseStation text is the first and simplest: every fork serves it, it is easy to parse and capture, and any other system can produce it. `aircraft.json` and Beast frames follow in later milestones for the extra fields they carry. Every source implements one `TruthSource` protocol and emits the same `TruthRecord`.
 
 | Adapter | Input | Mode | What it provides | Milestone |
 | --- | --- | --- | --- | --- |
 | `recording` | Parquet or JSONL files of TruthRecords | Replay | Whatever was recorded; the repeatable test fixture | 1 |
-| `sbs` | Dump1090 SBS-1 BaseStation text, TCP port 30003 | Live, record | Position, altitude, speed, track, callsign. Simplest to parse | 1 |
-| `planespotter` | Read-only Percona user on the position and velocity tables; `/flights/stream` for live | Replay, live | Lat, lon, altitude, velocity history | 1 |
+| `sbs` | Dump1090 SBS-1 BaseStation text, live on TCP port 30003 or captured to files | Live, replay, record | Position, altitude, speed, track, callsign. Simplest to parse | 1 |
 | `aircraft_json` | `aircraft.json` polled from readsb or dump1090-fa | Live, record | Adds separate `alt_baro` and `alt_geom`, plus NIC and NACp | 4 |
 | `beast` | Raw Mode S frames, Beast TCP port 30005, decoded with pyModeS | Live, record | Everything in the messages, with per-message timestamps | 6 |
 
 Port numbers and field availability differ between Dump1090 forks. Confirm against the decoder actually running before coding each adapter.
+
+Data held anywhere else, such as a database, is converted to SBS by an exporter that lives with the system that owns the data; planespotter's lives in the planespotter repository. `tools/README.md` documents what an exporter must write: the SBS line layout, time zone, altitude reference and units. The same pattern serves any other store: write an exporter, not an adapter. Package adapters are only for formats a Dump1090-family decoder produces.
+
+SBS timestamps carry no time zone (Dump1090 writes the host's local time), and its single altitude column is pressure altitude in standard Dump1090 output. Both are settings on the `sbs` adapter rather than assumptions in code.
 
 The protocol has two methods: `replay(start, end)` returning an iterator of records in time order, and `stream()` returning an async iterator for live use. A `record` CLI command pipes any live source into the `recording` format, which lets any user build their own history without a database.
 
@@ -94,9 +97,9 @@ Position and velocity arrive as separate messages. Adapters emit sparse records 
 
 ADS-B is good truth horizontally and weaker vertically, and the design treats both limits explicitly instead of assuming perfect truth.
 
-**Altitude reference.** Planespotter's stored altitude is most likely barometric. Standard airborne position messages carry pressure altitude, and only a rarely used message type carries GNSS height. Pressure altitude can differ from true height by several hundred feet depending on weather. Until verified, the planespotter adapter writes its altitude to `alt_unknown_ft`. Verification is a milestone 1 task: read the decoder code path planespotter consumes, or compare stored values against `alt_baro` and `alt_geom` from `aircraft.json` for the same aircraft and time.
+**Altitude reference.** A live Dump1090 SBS feed carries pressure altitude, which the `sbs` adapter writes to `alt_baro_ft`. Pressure altitude can differ from true height by several hundred feet depending on weather. An SBS file exported from another system carries whatever altitude that system stored: planespotter's is most likely barometric but unverified, so its exports are read with the altitude in `alt_unknown_ft`. Verification is a milestone 1 task: compare an export against a receiver's own SBS for the same hour on a day when the altimeter setting is well away from standard, so barometric and geometric altitude differ clearly, or against `alt_baro` and `alt_geom` from `aircraft.json` once that adapter exists.
 
-**No NIC or NACp from planespotter.** The builder takes a configurable default horizontal position sigma for sources lacking accuracy fields. Start with 30 m as an assumption and revisit once the `aircraft_json` adapter shows real NACp values for local traffic.
+**No NIC or NACp in SBS.** The builder takes a configurable default horizontal position sigma for sources lacking accuracy fields. Start with 30 m as an assumption and revisit once the `aircraft_json` adapter shows real NACp values for local traffic.
 
 **Consequences for scoring:**
 
@@ -168,7 +171,7 @@ Realism layers, added one at a time behind config flags:
 | Radar equation Pd | Pd from SNR, with RCS classed by aircraft type and a Swerling fluctuation model | 4 |
 | Other sensor types | Passive bearing-only, EO/IR with angular field of view | 4 onward |
 
-Aircraft type for the RCS class comes from an ICAO address lookup table shipped as an optional data file, so the core does not depend on planespotter's reference tables.
+Aircraft type for the RCS class comes from an ICAO address lookup table shipped as an optional data file, so the core needs no external database.
 
 ## Tracking and scoring
 
@@ -220,7 +223,6 @@ The core is Python because Stone Soup is a Python library; everything else is ch
 | Geodesy | `pymap3d` for WGS84 and ENU conversion |
 | Mode S decoding | `pyModeS`, only in the `beast` extra |
 | Config | Pydantic models loaded from YAML |
-| Database access | SQLAlchemy with a MySQL driver, only in the `planespotter` extra |
 | Tests and lint | pytest, ruff, type hints checked with mypy or pyright |
 | API and UI (milestone 5) | FastAPI, React, MapLibre GL |
 | Deployment | Docker Compose |
@@ -231,7 +233,7 @@ Rules for Claude Code sessions:
 - Keep `PROGRESS.md` (what is done, what is next) and `DECISIONS.md` (each design decision with its reason) current at the end of every session
 - The core package must install and pass tests with no extras, no database, and no network. A small recorded fixture in `tests/data/` makes that possible
 - Nothing site-specific in code. Receiver location, hosts, ports, and credentials come from config or environment variables
-- The planespotter adapter never writes to the database and uses a dedicated read-only user
+- Truth enters only through Dump1090-family decoder outputs. Other sources, such as databases, get an exporter to SBS that lives with that system and follows `tools/README.md`, not an adapter in the package
 - Every simulation path takes an explicit seed. Tests assert that identical config and seed give identical output
 - Units are SI internally (metres, seconds, radians). Conversion from feet, knots, and degrees happens only in the truth builder and config loading; TruthRecord keeps the source's native units
 
@@ -244,11 +246,11 @@ Six milestones, each ending in something runnable; milestones 1 to 3 give a work
 - [ ] Repo scaffold, `PROGRESS.md`, `DECISIONS.md`, CI running tests and lint
 - [ ] `TruthRecord`, `TruthSource` protocol, `recording` adapter, and a fixture file
 - [ ] `sbs` adapter and the `record` CLI command
-- [ ] `planespotter` adapter as an optional extra
+- [ ] The SBS contract for exporters (`tools/README.md`)
 - [ ] Truth builder through to Stone Soup `GroundTruthPath`
 - [ ] Resolve the altitude reference question for planespotter
 
-Done when a notebook plots an hour of flights from both a recording and planespotter, and the same aircraft from both sources agree within the truth sigma.
+Done when a notebook plots an hour of flights from both a receiver recording and a planespotter SBS export, and the same aircraft from both sources agree within the truth sigma.
 
 **Milestone 2: one sensor**
 
@@ -297,8 +299,7 @@ Done when the map shows live simulated tracks from two sensors against live trut
 None of these block milestone 1, but the first three should be settled during it.
 
 - [ ] Is planespotter's stored altitude barometric or geometric? Expected barometric; verify as described under Truth quality
-- [ ] Which Dump1090 fork and output format does the receiver run, and which port does planespotter read? This decides whether `sbs` or `aircraft_json` is the first public adapter
-- [ ] What are the exact table and column names, units, and timestamp semantics in the planespotter position and velocity tables? Provide the schema to the first Claude Code session
+- [ ] Which Dump1090 fork and output formats does the receiver run, and in which time zone does it write SBS timestamps?
 - [ ] Final project name (working name: tracking-sim, package tracking\_sim)
 - [ ] Licence, if the repo will be public
 - [ ] Is the 30 m default truth sigma reasonable for local traffic? Check against real NACp values in milestone 4

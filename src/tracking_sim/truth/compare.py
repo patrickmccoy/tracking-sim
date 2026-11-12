@@ -231,7 +231,7 @@ def assess_altitude_reference(
 
     ``candidate`` is the source under test (for example an SBS export from a
     database, read with ``altitude_field="alt_unknown_ft"``). ``reference`` should come from a
-    receiver that reports barometric altitude (any SBS feed) and ideally
+    receiver that reports barometric altitude (any live SBS feed) and ideally
     geometric altitude too (``aircraft.json``), for the same aircraft and
     time window.
 

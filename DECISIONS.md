@@ -5,8 +5,9 @@ Each design decision with its reason. Newest last.
 ## D1. Packaging: uv, hatchling, src layout, Python 3.11+
 
 `uv` manages the environment and lockfile; `hatchling` builds the wheel from
-`src/tracking_sim`. Optional features (`planespotter`, `notebook`) are extras so
-the core installs with one command and no database driver. Dev tools live in a
+`src/tracking_sim`. Optional features are extras so the core installs with
+one command; today the only extra is `notebook` (a `planespotter` extra
+existed until D11 removed it). Dev tools live in a
 `dev` dependency group that `uv sync` installs by default.
 
 ## D2. Stone Soup pinned to 1.9.x
@@ -17,8 +18,8 @@ every class used here was checked against.
 
 ## D3. CI runs the core tests without extras
 
-The `test-core` job installs no extras, so any test that needs SQLAlchemy or
-Jupyter must skip itself when the dependency is missing. A separate job runs
+The `test-core` job installs no extras, so any test that needs Jupyter must
+skip itself when the dependency is missing. A separate job runs
 everything with all extras.
 
 ## D4. Timestamps are aware UTC datetimes everywhere
@@ -46,6 +47,10 @@ Dump1090 output, so it maps to `alt_baro_ft`, with `altitude_field` as an
 override for forks that differ.
 
 ## D7. Planespotter schema lives in config, altitude goes to `alt_unknown_ft`
+
+*Superseded by D11: the adapter was removed, and planespotter data now
+arrives as SBS from an exporter in the planespotter repository. The
+read-only rule carries over to exporters (tools/README.md).*
 
 The planespotter schema (table and column names, units, timestamp semantics)
 was not available when the adapter was written, so `PlanespotterConfig`
@@ -96,18 +101,49 @@ was available in the session that built milestone 1. What exists instead:
 * `tracking-sim compare CANDIDATE REFERENCE --altitude` runs it on two
   recordings.
 
-Procedure, about an hour of wall time:
+Procedure, about an hour of wall time (updated for D11):
 
 1. Record a reference from the same receiver planespotter uses:
    `tracking-sim record sbs --host <receiver> --tz <zone> -o data/ref.parquet --duration 3600`.
-   SBS only gives barometric altitude. Once the `aircraft_json` adapter
-   exists (milestone 4), record that instead to get geometric altitude too.
-2. Export the same hour from planespotter:
-   `tracking-sim export planespotter --config <cfg> --start ... --end ... -o data/ps.parquet`.
+2. Export the same hour as SBS with planespotter's exporter (in the
+   planespotter repository) and convert it, reading the altitude as unknown:
+   `tracking-sim export sbs data/ps.sbs.gz --receiver planespotter --altitude-field alt_unknown_ft -o data/ps.parquet`.
 3. `tracking-sim compare data/ps.parquet data/ref.parquet --altitude`.
 
-A `baro` verdict with only an SBS reference is strong evidence but not
-proof: on a day near standard pressure, geometric and barometric altitude
-can be within the tolerance. Pick a day when the local altimeter setting is
-well away from 29.92 inHg, or repeat with `aircraft.json`. When settled, set
-`altitude_reference` in the planespotter config and record the result here.
+SBS only carries barometric altitude, so the reference has no geometric
+altitude, and a `baro` verdict is only convincing on a day when the local
+altimeter setting is well away from 29.92 inHg: then a geometric source
+would differ from the receiver's barometric altitude by hundreds of feet. On
+a day near standard pressure, both answers fit. Once the `aircraft_json`
+adapter exists (milestone 4), record that as the reference instead to get
+geometric altitude too. When settled, record the result here; if it is
+barometric, read planespotter exports with the default
+`--altitude-field alt_baro_ft`.
+
+## D11. Truth enters only through Dump1090 outputs; other data arrives via exporters
+
+The planespotter adapter tied the package to one site's database: a schema
+config, SQLAlchemy and a MySQL driver, and a polling live mode. Now package
+adapters exist only for formats a Dump1090-family decoder produces, so the
+framework is usable by anyone with a receiver: SBS-1 BaseStation text today
+(live over TCP or replayed from captured files), with `aircraft_json`
+(milestone 4) and `beast` (milestone 6) still planned.
+
+Data held anywhere else reaches the framework as SBS, written by an
+exporter that lives with the system that owns the data. Planespotter's
+exporter belongs in the planespotter repository, next to the schema it
+reads, so this project carries no database code, schema config or
+credentials handling at all. What this project owns is the contract:
+`tools/README.md` specifies the SBS lines exporters must write (layout,
+transmission types, time zone, altitude reference, units), how they should
+behave (time window, read-only, raw rather than smoothed data, documented
+output) and how to check an export with `tracking-sim compare`.
+
+Consequences:
+
+* An SBS export carries one altitude column and no NIC or NACp, so the
+  planespotter altitude check against a receiver's SBS needs a day with
+  non-standard pressure (D10) until `aircraft_json` brings geometric
+  altitude.
+* Live mode for planespotter (database polling) is gone; live truth comes
+  from the receiver.

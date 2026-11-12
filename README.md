@@ -19,16 +19,18 @@ You define a sensor (range, accuracy, scan rate, detection probability), place i
 
 The system is a one-way pipeline of five stages. Each stage talks to the next only through a defined data type, and the core never imports a specific truth source.
 
+Truth enters only through the outputs of a Dump1090-family decoder, so the framework works for anyone with a receiver. Today that is **SBS-1 BaseStation text**, live from a receiver or replayed from captured files; `aircraft.json` and Beast frames are on the roadmap. Data held elsewhere, such as a flight-history database, is converted to SBS by an exporter that lives with that system; [tools/README.md](tools/README.md) is the contract exporters write to.
+
 ```
  ┌───────────────┐   TruthRecord   ┌───────────────┐  GroundTruthPath  ┌──────────────┐  Detection  ┌──────────┐  Track  ┌────────────────┐
  │ Truth sources │ ──────────────▶ │ Truth builder │ ────────────────▶ │ Sensor       │ ──────────▶ │ Trackers │ ──────▶ │ Scoring and UI │
  │ sbs, recording│                 │ clean, smooth │                   │ simulator    │             │ (Stone   │         │ metrics, runs, │
- │ planespotter  │                 │ ENU, state_at │ ─────────┐        │ (milestone 2)│             │  Soup)   │         │ map            │
+ │               │                 │ ENU, state_at │ ─────────┐        │ (milestone 2)│             │  Soup)   │         │ map            │
  └───────────────┘                 └───────────────┘          │        └──────────────┘             └──────────┘         └────────────────┘
        built                              built               └────────────── truth for scoring ─────────────────────────────────▲
 ```
 
-1. **Truth sources** emit canonical `TruthRecord`s. Every source implements the same `TruthSource` protocol (`replay(start, end)` and `stream()`), so a raw Dump1090 feed, a recording file and planespotter are interchangeable.
+1. **Truth sources** emit canonical `TruthRecord`s. Every source implements the same `TruthSource` protocol (`replay(start, end)` and `stream()`), so a live Dump1090 feed, a captured SBS file and a recording are interchangeable.
 2. **The truth builder** turns sparse records into clean per-flight segments that can be sampled at any time.
 3. **The sensor simulator** samples those paths at each sensor's scan times and emits noisy detections, misses and false alarms. *(Milestone 2.)*
 4. **Trackers** are Stone Soup pipelines assembled from config. *(Milestone 3.)*
@@ -38,10 +40,9 @@ The system is a one-way pipeline of five stages. Each stage talks to the next on
 
 | Adapter | Input | Modes | Notes |
 | --- | --- | --- | --- |
-| `recording` | Parquet or JSONL files of TruthRecords | replay | The repeatable fixture format. `tracking-sim record` writes it. |
-| `sbs` | Dump1090 SBS-1 BaseStation text (TCP port 30003) or captured files | live, replay | Position, barometric altitude, speed, track, vertical rate, callsign. |
-| `planespotter` | A planespotter MySQL/Percona database, read-only | replay, live (polling) | Optional extra. Schema comes from a YAML config. |
-| `aircraft_json`, `beast` | readsb / dump1090-fa `aircraft.json`, Beast frames | | Milestones 4 and 6. |
+| `sbs` | Dump1090 SBS-1 BaseStation text (TCP port 30003) or captured files (plain or `.gz`) | live, replay | Position, barometric altitude, speed, track, vertical rate, callsign. |
+| `recording` | Parquet or JSONL files of TruthRecords | replay | A parsed SBS feed saved for fast, repeatable replay. `tracking-sim record` writes it. |
+| `aircraft_json`, `beast` | readsb / dump1090-fa `aircraft.json`, Beast frames | | Milestones 4 and 6: geometric altitude, NIC/NACp, raw per-message timestamps. |
 
 `TruthRecord` keeps the source's native units (feet, knots, degrees). Position and velocity usually arrive as separate messages, so everything except `icao24`, `ts`, `source_id` and (for position messages) `lat`/`lon` is optional. Timestamps are always timezone-aware UTC.
 
@@ -61,9 +62,9 @@ The system is a one-way pipeline of five stages. Each stage talks to the next on
 
 ADS-B is good truth horizontally and weaker vertically, and the design treats both limits explicitly:
 
-- Sources without accuracy fields (SBS, planespotter) get a configurable horizontal truth sigma, 30 m by default.
+- SBS carries no accuracy fields, so truth gets a configurable horizontal sigma, 30 m by default.
 - Barometric altitude can differ from true height by hundreds of feet depending on weather, so every segment records which altitude reference it uses.
-- Planespotter's stored altitude is believed to be barometric but has not been verified, so it is stored as `alt_unknown_ft`. `tracking-sim compare --altitude` is the tool for settling it; see [DECISIONS.md](DECISIONS.md) (D10).
+- A live SBS feed carries barometric altitude. An exported SBS file carries whatever its source stored, so until that is known, read it with `--altitude-field alt_unknown_ft`. `tracking-sim compare --altitude` is the tool for settling it; see [DECISIONS.md](DECISIONS.md) (D10).
 
 ### Package layout
 
@@ -79,14 +80,13 @@ src/tracking_sim/
     sources/
       recording.py       # Parquet / JSONL reader and writer
       sbs.py             # Dump1090 SBS-1 BaseStation
-      planespotter.py    # optional, read-only database adapter
     builder.py           # dedupe, segment, gate, merge, ENU -> TruthSet
     trajectory.py        # smoothing splines, state_at(t)
     compare.py           # source agreement and altitude reference checks
     recorder.py          # record / export / summary helpers
     synthetic.py         # seeded synthetic traffic for tests and demos
 notebooks/               # 01_truth_playground.ipynb
-scenarios/truth/         # example source configs
+tools/README.md          # the SBS contract for exporters from other systems
 scripts/make_fixture.py  # regenerates tests/data
 tests/                   # pytest suite; tests/data holds the synthetic fixture
 ```
@@ -126,7 +126,7 @@ uv run jupyter lab notebooks/01_truth_playground.ipynb
 
 Run all cells. With no other setup it uses the synthetic one-hour fixture in `tests/data/`, so it works offline with no receiver or database. You'll see:
 
-1. A summary of the recording: 14 aircraft and about 11,000 sparse records from two receivers.
+1. A summary of the recording: 14 aircraft around Rocky Mountain Metropolitan Airport and about 11,000 sparse records from two receivers.
 2. The truth builder's statistics: duplicates dropped, bad decodes rejected, and segments built (one aircraft is split by a two-minute coverage gap).
 3. A map of an hour of flights with range rings, plus their altitude profiles.
 4. A close-up of a segment showing the position the speed gate rejected, and the smoothed ground speed against the ADS-B velocity reports.
@@ -165,6 +165,8 @@ Already have a capture of port 30003 (for example from `nc receiver 30003 > capt
 uv run tracking-sim export sbs capture.sbs --tz America/Denver -o data/capture.parquet
 ```
 
+You can also skip the conversion: the notebook reads `.sbs` and `.sbs.gz` files directly.
+
 Check what you recorded:
 
 ```sh
@@ -174,47 +176,39 @@ uv run tracking-sim info data/2026-11-01.parquet
 ### Point the notebook at it
 
 ```sh
-export TRACKING_SIM_RECORDING=data/2026-11-01.parquet
-export TRACKING_SIM_ORIGIN=39.9088,-105.1172,1729  # receiver lat, lon, height (m)
+export TRACKING_SIM_RECORDING=data/2026-11-01.parquet   # or a .sbs / .sbs.gz capture
+export TRACKING_SIM_SBS_TZ=America/Denver                # if the recording is SBS text
+export TRACKING_SIM_ORIGIN=39.9088,-105.1172,1729        # receiver lat, lon, height (m)
 export TRACKING_SIM_WINDOW=2026-11-01T23:00Z,2026-11-02T00:00Z   # optional
 uv run jupyter lab notebooks/01_truth_playground.ipynb
 ```
 
-Without a second source configured, the notebook stops at section 5 for your own recording; set up planespotter (below) to compare against it.
-
-### Planespotter (optional)
-
-Planespotter is supported as an optional, read-only truth source. Install the extra and describe your schema:
+Section 5 compares against a second source for the same hour: another receiver's recording or capture, or an SBS export from another system (below). Without one, the notebook stops there for your own recording.
 
 ```sh
-uv sync --extra notebook --extra planespotter
-cp scenarios/truth/planespotter.example.yaml scenarios/truth/planespotter.yaml
-# edit table and column names, units and timestamp kind to match your database
-export PLANESPOTTER_DB_HOST=db.local PLANESPOTTER_DB_USER=tracking_sim_ro PLANESPOTTER_DB_PASSWORD=...
+export TRACKING_SIM_SECOND=data/export.sbs.gz   # its altitude is read as unknown-reference
 ```
 
-Connect as a dedicated read-only database user. The adapter only issues `SELECT`s and also sets MySQL sessions read-only. Credentials stay in environment variables, referenced from the YAML as `${VAR}`.
+### Data from other systems
+
+Flight history held somewhere else, such as a database, comes in as SBS text written by an exporter. Exporters live with the system that owns the data, not in this repository; [tools/README.md](tools/README.md) describes exactly what they must write (line layout, time zone, altitude reference, units) and how to check the result. Once you have an export:
 
 ```sh
-# copy a window into a recording
-uv run tracking-sim export planespotter --config scenarios/truth/planespotter.yaml \
-    --start 2026-11-01T23:00Z --end 2026-11-02T00:00Z -o data/ps.parquet
+# convert it like any capture, keeping the altitude reference open until verified
+uv run tracking-sim export sbs data/export.sbs.gz --receiver mysource \
+    --altitude-field alt_unknown_ft -o data/export.parquet
 
 # check it against your own receiver for the same hour, including its altitude reference
-uv run tracking-sim compare data/ps.parquet data/2026-11-01.parquet --altitude
+uv run tracking-sim compare data/export.parquet data/2026-11-01.parquet --altitude
 ```
-
-Set `TRACKING_SIM_PLANESPOTTER=scenarios/truth/planespotter.yaml` to make the notebook use planespotter as its second source.
 
 ## Command line
 
 ```
-tracking-sim record sbs           record a live Dump1090 feed into a recording file
-tracking-sim record planespotter  poll a planespotter database into a recording file
-tracking-sim export sbs           convert captured SBS text files into a recording
-tracking-sim export planespotter  copy a time window from planespotter into a recording
-tracking-sim compare A B          check two recordings agree on the same aircraft (--altitude too)
-tracking-sim info FILES           summarize recordings
+tracking-sim record sbs    record a live Dump1090 feed into a recording file
+tracking-sim export sbs    convert captured SBS text files into a recording
+tracking-sim compare A B   check two recordings agree on the same aircraft (--altitude too)
+tracking-sim info FILES    summarize recordings
 ```
 
 Run `uv run tracking-sim <command> --help` for every option. `compare` exits non-zero when the sources disagree, so it can be scripted.
@@ -273,10 +267,10 @@ Nothing site-specific lives in code. Hosts, ports, credentials and locations com
 | --- | --- | --- |
 | `TRACKING_SIM_SBS_HOST` | `record sbs` | Dump1090 host |
 | `TRACKING_SIM_SBS_PORT` | `record sbs` | BaseStation port (default 30003) |
-| `TRACKING_SIM_SBS_TZ` | `record sbs` | Time zone of SBS timestamps (default UTC) |
-| `TRACKING_SIM_RECEIVER` | `record sbs` | Receiver name; records get `source_id` `sbs:<name>` |
-| `TRACKING_SIM_PLANESPOTTER` | CLI, notebook | Path to a planespotter YAML config |
-| `TRACKING_SIM_RECORDING` | notebook | Recording file, directory or glob |
+| `TRACKING_SIM_SBS_TZ` | `record sbs`, `export sbs`, notebook | Time zone of SBS timestamps (default UTC) |
+| `TRACKING_SIM_RECEIVER` | `record sbs`, `export sbs` | Receiver name; records get `source_id` `sbs:<name>` |
+| `TRACKING_SIM_RECORDING` | notebook | Recording (file, directory or glob) or SBS capture |
+| `TRACKING_SIM_SECOND` | notebook | Second source for section 5, recording or SBS |
 | `TRACKING_SIM_ORIGIN` | notebook | `LAT,LON[,ALT_M]` of the local frame |
 | `TRACKING_SIM_WINDOW` | notebook | `START,END` in ISO 8601 |
 
@@ -297,7 +291,8 @@ CI (GitHub Actions) runs lint and mypy, the core tests on Python 3.11 to 3.13 wi
 
 Conventions, from the design document:
 
-- The core package must install and pass tests with no extras, no database and no network. Tests for optional adapters skip themselves when their extra is missing.
+- The core package must install and pass tests with no extras, no database and no network. The notebook test skips itself when the notebook extra is missing.
+- Package adapters are only for Dump1090-family decoder outputs. Other data sources, such as databases, get an exporter to SBS that lives with that system and follows [tools/README.md](tools/README.md).
 - Every simulation path takes an explicit seed; identical config and seed give identical output.
 - Units are SI internally. Conversion from feet, knots and degrees happens only in the truth builder and config loading.
 - Work one milestone at a time, and keep [PROGRESS.md](PROGRESS.md) and [DECISIONS.md](DECISIONS.md) current at the end of each session.
@@ -306,7 +301,7 @@ Conventions, from the design document:
 
 | Milestone | Delivers |
 | --- | --- |
-| 1. Truth | Truth sources, truth builder, Stone Soup ground truth, notebook. **Implemented** (altitude verdict pending real data). |
+| 1. Truth | SBS ingest, exporter contract, truth builder, Stone Soup ground truth, notebook. **Implemented** (altitude verdict pending real data). |
 | 2. One sensor | `SensorSpec` YAML, rotating 2D radar with beam-crossing timing, noise, Pd, false alarms and radar horizon; seeded replay engine. |
 | 3. Tracking and metrics | Tracker factory from config (EKF + GNN baseline, UKF, multiple-model); OSPA, GOSPA and SIAP; one-command comparison table. |
 | 4. Scenarios and realism | Scenario files and an immutable run store, terrain masking, radar-equation Pd, `aircraft_json` adapter, passive bearing-only sensor. |
