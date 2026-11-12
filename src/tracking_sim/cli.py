@@ -10,6 +10,7 @@ Variable                        Used for
 ``TRACKING_SIM_SBS_PORT``       BaseStation port (default 30003)
 ``TRACKING_SIM_SBS_TZ``         Receiver time zone of SBS timestamps
 ``TRACKING_SIM_RECEIVER``       Receiver name used in ``source_id``
+``TRACKING_SIM_RUNS``           Run store directory (default ``runs``)
 ==============================  =======================================
 """
 
@@ -24,6 +25,7 @@ import sys
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from tracking_sim.geo import LocalFrame
 from tracking_sim.truth.record import TruthRecord, ensure_utc
@@ -151,17 +153,116 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
+    from tracking_sim.eval.runstore import RunStore
     from tracking_sim.sim.scenario import load_scenario, run_scenario
 
     scenario = load_scenario(args.scenario)
     if args.seed is not None:
         scenario = scenario.with_seed(args.seed)
-    print(f"running {scenario.spec.name} (seed {scenario.spec.seed})...", file=sys.stderr)
-    result = run_scenario(scenario)
-    print(result.summary())
     if args.out:
+        # A plain output directory, outside the run store: always recomputed.
+        print(f"running {scenario.spec.name} (seed {scenario.spec.seed})...", file=sys.stderr)
+        result = run_scenario(scenario)
+        print(result.summary())
         out = result.write(args.out)
         print(f"\nwrote {out}", file=sys.stderr)
+        return 0
+    store = RunStore(args.runs)
+    rid, _ = store.plan(scenario)
+    if not (store.root / rid / "manifest.json").exists():
+        print(f"running {scenario.spec.name} (seed {scenario.spec.seed})...", file=sys.stderr)
+    record = store.run(scenario)
+    print(record.summary)
+    how = "reused stored run" if record.reused else "stored run"
+    print(f"\n{how} {record.id} in {record.path}", file=sys.stderr)
+    return 0
+
+
+def _runs_store(args: argparse.Namespace) -> Any:
+    from tracking_sim.eval.runstore import RunStore
+
+    return RunStore(args.runs)
+
+
+def _cmd_runs_list(args: argparse.Namespace) -> int:
+    runs = _runs_store(args).list()
+    if not runs:
+        print(f"no runs in {args.runs}")
+        return 0
+    rows = [("run", "created", "seed", "trackers", "best OSPA m")]
+    for r in runs:
+        trackers = r.metrics["trackers"]
+        best = min(trackers, key=lambda t: t["ospa_m"]) if trackers else None
+        rows.append(
+            (
+                r.id,
+                r.manifest["created"],
+                str(r.manifest["scenario"]["seed"]),
+                str(len(trackers)),
+                f"{best['ospa_m']:.0f} ({best['tracker']})" if best else "-",
+            )
+        )
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+    for row in rows:
+        print("  ".join(cell.ljust(w) for cell, w in zip(row, widths, strict=True)).rstrip())
+    return 0
+
+
+def _cmd_runs_show(args: argparse.Namespace) -> int:
+    record = _runs_store(args).get(args.run)
+    print(record.describe())
+    print()
+    print(record.summary)
+    return 0
+
+
+def _flatten(value: Any, prefix: str = "") -> dict[str, Any]:
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            out.update(_flatten(item, f"{prefix}.{key}" if prefix else str(key)))
+        return out
+    if isinstance(value, list) and value and all(isinstance(v, dict) for v in value):
+        out = {}
+        for i, item in enumerate(value):
+            label = item.get("id", i) if isinstance(item, dict) else i
+            out.update(_flatten(item, f"{prefix}[{label}]"))
+        return out
+    return {prefix: value}
+
+
+def _cmd_runs_compare(args: argparse.Namespace) -> int:
+    store = _runs_store(args)
+    a, b = store.get(args.a), store.get(args.b)
+    print(f"a = {a.id}\nb = {b.id}\n")
+    fa, fb = _flatten(a.manifest["scenario"]), _flatten(b.manifest["scenario"])
+    changed = sorted(k for k in fa.keys() | fb.keys() if fa.get(k) != fb.get(k))
+    print("configuration differences:" if changed else "configuration: identical")
+    for key in changed:
+        print(f"  {key}: {fa.get(key, '-')} -> {fb.get(key, '-')}")
+    if a.manifest["code"]["hashed"] != b.manifest["code"]["hashed"]:
+        print("  code: differs")
+    ta = {t["tracker"]: t for t in a.metrics["trackers"]}
+    tb = {t["tracker"]: t for t in b.metrics["trackers"]}
+    keys = [
+        "ospa_m",
+        "gospa",
+        "completeness",
+        "spuriousness",
+        "position_accuracy_m",
+        "median_latency_s",
+        "tracks",
+    ]
+    print("\nmetrics (a -> b):")
+    for tracker in [t for t in ta if t in tb]:
+        cells = []
+        for key in keys:
+            va, vb = ta[tracker].get(key), tb[tracker].get(key)
+            if isinstance(va, int | float) and isinstance(vb, int | float):
+                cells.append(f"{key} {va:.3g} -> {vb:.3g}")
+        print(f"  {tracker}: " + ", ".join(cells))
+    for tracker in sorted(ta.keys() ^ tb.keys()):
+        print(f"  {tracker}: only in {'a' if tracker in ta else 'b'}")
     return 0
 
 
@@ -235,9 +336,32 @@ def build_parser() -> argparse.ArgumentParser:
         "run", help="run a scenario: simulate its sensors, run and score its trackers"
     )
     run.add_argument("scenario", type=Path, help="scenario YAML (see scenarios/)")
-    run.add_argument("--out", "-o", type=Path, help="directory for detections, tracks, metrics")
     run.add_argument("--seed", type=int, help="override the scenario's seed")
+    _add_runs_option(run)
+    run.add_argument(
+        "--out",
+        "-o",
+        type=Path,
+        help="write to this plain directory instead of the run store (always recomputes)",
+    )
     run.set_defaults(func=_cmd_run)
+
+    runs = commands.add_parser("runs", help="list, show and compare stored runs")
+    runs_commands = runs.add_subparsers(dest="runs_command", required=True)
+    runs_list = runs_commands.add_parser("list", help="every stored run, oldest first")
+    _add_runs_option(runs_list)
+    runs_list.set_defaults(func=_cmd_runs_list)
+    runs_show = runs_commands.add_parser("show", help="one run's manifest and results")
+    runs_show.add_argument("run", help="run id or a unique prefix")
+    _add_runs_option(runs_show)
+    runs_show.set_defaults(func=_cmd_runs_show)
+    runs_compare = runs_commands.add_parser(
+        "compare", help="configuration and metric differences between two runs"
+    )
+    runs_compare.add_argument("a", help="run id or prefix")
+    runs_compare.add_argument("b", help="run id or prefix")
+    _add_runs_option(runs_compare)
+    runs_compare.set_defaults(func=_cmd_runs_compare)
 
     info = commands.add_parser("info", help="summarize recording files")
     info.add_argument("paths", nargs="+", help="recording files, directories or globs")
@@ -245,6 +369,15 @@ def build_parser() -> argparse.ArgumentParser:
     info.add_argument("--end", help="ISO 8601 end time (exclusive)")
     info.set_defaults(func=_cmd_info)
     return parser
+
+
+def _add_runs_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--runs",
+        type=Path,
+        default=Path(_env("TRACKING_SIM_RUNS", "runs") or "runs"),
+        help="run store directory (default: runs, or TRACKING_SIM_RUNS)",
+    )
 
 
 def _add_sbs_options(sbs: argparse.ArgumentParser) -> None:
