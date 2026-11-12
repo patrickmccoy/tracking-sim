@@ -150,6 +150,21 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     return 0 if report.agrees else 1
 
 
+def _cmd_run(args: argparse.Namespace) -> int:
+    from tracking_sim.sim.scenario import load_scenario, run_scenario
+
+    scenario = load_scenario(args.scenario)
+    if args.seed is not None:
+        scenario = scenario.with_seed(args.seed)
+    print(f"running {scenario.spec.name} (seed {scenario.spec.seed})...", file=sys.stderr)
+    result = run_scenario(scenario)
+    print(result.summary())
+    if args.out:
+        out = result.write(args.out)
+        print(f"\nwrote {out}", file=sys.stderr)
+    return 0
+
+
 def _cmd_info(args: argparse.Namespace) -> int:
     start = parse_time(args.start) if args.start else None
     end = parse_time(args.end) if args.end else None
@@ -215,6 +230,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="also test whether the candidate's altitude is barometric or geometric",
     )
     compare.set_defaults(func=_cmd_compare)
+
+    run = commands.add_parser(
+        "run", help="run a scenario: simulate its sensors, run and score its trackers"
+    )
+    run.add_argument("scenario", type=Path, help="scenario YAML (see scenarios/)")
+    run.add_argument("--out", "-o", type=Path, help="directory for detections, tracks, metrics")
+    run.add_argument("--seed", type=int, help="override the scenario's seed")
+    run.set_defaults(func=_cmd_run)
 
     info = commands.add_parser("info", help="summarize recording files")
     info.add_argument("paths", nargs="+", help="recording files, directories or globs")

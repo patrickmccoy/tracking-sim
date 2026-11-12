@@ -1,0 +1,24 @@
+# The milestone 3 scenario: an hour of synthetic traffic around Rocky
+# Mountain Metropolitan Airport, one rotating 2D radar, three trackers.
+#
+#   uv run tracking-sim run scenarios/kbjc-synthetic.yaml --out runs/kbjc
+#
+# Paths are relative to this file. A minimal subset of the scenario format
+# in the design document; milestone 4 extends it.
+name: kbjc-synthetic
+origin: {lat: 39.9088, lon: -105.1172, alt_m: 1729}   # optional: defaults to the first sensor
+truth:
+  source: recording               # recording (Parquet/JSONL) or sbs
+  path: ../tests/data/synthetic_1h.parquet
+  window: ["2026-11-01T23:00:00Z", "2026-11-02T00:00:00Z"]
+sensors:
+  - sensors/radar-1.yaml
+trackers:
+  - trackers/ekf-cv-gnn.yaml
+  - trackers/ukf-cv-gnn.yaml
+  - trackers/pf-mm-gnn.yaml
+seed: 42
+metrics:
+  cutoff_m: 1000                  # OSPA/GOSPA cut-off
+  p: 1
+  association_threshold_m: 1000   # SIAP track-to-truth pairing
