@@ -58,7 +58,6 @@ def model(site: SensorSite | None = None) -> CartesianToBearingSlantRange:
 
 
 def run(pipe: TrackerPipeline, batches: list[tuple[datetime, set[Detection]]]) -> set[Any]:
-    np.random.seed(0)  # noqa: NPY002 - Stone Soup particle components use the global state
     tracker = pipe.make_tracker([(t, pipe.adapt(d)) for t, d in batches])
     seen: set[Any] = set()
     for _, tracks in tracker:

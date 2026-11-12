@@ -11,8 +11,8 @@ variance. Velocity starts at zero with a wide spread.
 ``ParticleConvertingInitiator`` wraps a multi-measurement initiator so that
 tentative tracks run on a cheap Kalman filter, and a track is only turned
 into a multiple-model particle state once it is confirmed. Particles are
-sampled from numpy's global random state, as Stone Soup's own particle
-components do; the tracker runner seeds it per run.
+sampled from a generator seeded by the run seed and the track's state, so
+the result does not depend on the order tracks are confirmed in.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from stonesoup.types.track import Track
 from stonesoup.types.update import GaussianStateUpdate
 
 from tracking_sim.sensors.measurement import CartesianToBearingSlantRange
+from tracking_sim.tracking.particle import content_rng
 
 __all__ = ["ParticleConvertingInitiator", "SlantRangeInitiator", "initial_position"]
 
@@ -123,6 +124,7 @@ class ParticleConvertingInitiator(Initiator):  # type: ignore[misc]
 
     initiator: Initiator = Property(doc="Gaussian multi-measurement initiator")
     number_particles: int = Property(default=1000, doc="Particles per confirmed track")
+    seed: int = Property(default=0, doc="Run seed mixed into the particle draws")
 
     def initiate(self, detections: Any, timestamp: Any, **kwargs: Any) -> set[Track]:
         confirmed = self.initiator.initiate(detections, timestamp, **kwargs)
@@ -134,9 +136,8 @@ class ParticleConvertingInitiator(Initiator):  # type: ignore[misc]
         covar = np.asarray(state.covar, dtype=float)
         covar = (covar + covar.T) / 2
         n = self.number_particles
-        # The global generator on purpose: Stone Soup's particle predictor and
-        # resampler draw from it too, and the runner seeds it per tracker.
-        samples = np.random.multivariate_normal(mean, covar, size=n).T  # noqa: NPY002
+        rng = content_rng(self.seed, mean, state.timestamp)
+        samples = rng.multivariate_normal(mean, covar, size=n).T
         particles = MultiModelParticleState(
             StateVectors(samples),
             log_weight=np.full(n, -np.log(n)),

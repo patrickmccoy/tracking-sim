@@ -12,6 +12,9 @@ State layouts:
   Stone Soup's multiple-model predictor then holds at zero, so a particle
   that switches to the turn model starts from straight flight.
 
+The particle filter's randomness is reproducible regardless of the order
+Stone Soup visits tracks (``tracking.particle``).
+
 Every tracker confirms tracks the same way: tentative tracks start from
 one detection at an assumed height (``SlantRangeInitiator``), run on an
 extended Kalman filter with the same motion model, and are confirmed after
@@ -41,18 +44,21 @@ from stonesoup.models.transition.linear import (
 )
 from stonesoup.models.transition.nonlinear import ConstantTurn
 from stonesoup.predictor.kalman import ExtendedKalmanPredictor, UnscentedKalmanPredictor
-from stonesoup.predictor.particle import MultiModelPredictor
 from stonesoup.resampler.particle import ESSResampler
 from stonesoup.tracker.simple import MultiTargetTracker
 from stonesoup.types.array import CovarianceMatrix, StateVector
 from stonesoup.types.detection import Clutter, Detection, TrueDetection
 from stonesoup.types.state import GaussianState
 from stonesoup.updater.kalman import ExtendedKalmanUpdater, UnscentedKalmanUpdater
-from stonesoup.updater.particle import MultiModelParticleUpdater
 
 from tracking_sim.sensors.measurement import CartesianToBearingSlantRange
 from tracking_sim.tracking.gating import PreGatedHypothesiser
 from tracking_sim.tracking.initiators import ParticleConvertingInitiator, SlantRangeInitiator
+from tracking_sim.tracking.particle import (
+    SeededMultiModelParticleUpdater,
+    SeededMultiModelPredictor,
+    SeededSystematicResampler,
+)
 from tracking_sim.tracking.spec import TrackerSpec
 
 __all__ = ["TrackerPipeline", "build_tracker"]
@@ -199,8 +205,13 @@ def _gated(spec: TrackerSpec, predictor: Any, updater: Any) -> PreGatedHypothesi
     )
 
 
-def build_tracker(spec: TrackerSpec) -> TrackerPipeline:
-    """Assemble the Stone Soup components ``spec`` describes."""
+def build_tracker(spec: TrackerSpec, *, seed: int = 0) -> TrackerPipeline:
+    """Assemble the Stone Soup components ``spec`` describes.
+
+    ``seed`` feeds the particle filter's random draws (the Kalman filters
+    have none). Each draw is seeded from it and from the content it is for,
+    so the result does not depend on the order Stone Soup visits tracks.
+    """
     layout = LAYOUT_7D if spec.ndim_state == 7 else LAYOUT_6D
 
     # Tentative tracks: an EKF with the tracker's own state layout.
@@ -250,16 +261,19 @@ def build_tracker(spec: TrackerSpec) -> TrackerPipeline:
             ]
         )
         p = m.switch_probability
-        predictor = MultiModelPredictor(
+        predictor = SeededMultiModelPredictor(
             transition_models=[straight, turning],
             transition_matrix=np.array([[1 - p, p], [p, 1 - p]]),
             model_mappings=[(0, 1, 2, 3, 5, 6), (0, 1, 2, 3, 4, 5, 6)],
+            seed=seed,
         )
-        updater = MultiModelParticleUpdater(
-            measurement_model=None, predictor=predictor, resampler=ESSResampler()
+        updater = SeededMultiModelParticleUpdater(
+            measurement_model=None,
+            predictor=predictor,
+            resampler=ESSResampler(resampler=SeededSystematicResampler(seed=seed)),
         )
         initiator = ParticleConvertingInitiator(
-            initiator=confirm, number_particles=spec.particle_count
+            initiator=confirm, number_particles=spec.particle_count, seed=seed
         )
 
     return TrackerPipeline(
