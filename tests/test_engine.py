@@ -185,3 +185,51 @@ def test_terrain_removes_low_detections_on_the_ridge_bearing(truth: TruthSet) ->
         np.radians(removed["azimuth_deg"].to_numpy()), removed["ground_range_m"].to_numpy()
     )
     assert (removed["height_m"].to_numpy() < need).all()
+
+
+def test_radar_equation_pd(tmp_path: Path) -> None:
+    import numpy as np
+
+    traffic = generate_traffic(
+        seed=5,
+        duration_s=600,
+        receivers=(ReceiverConfig("rx", outlier_count=0, report_category=True),),
+    )
+    truth = build_truth(traffic.records, FRAME)
+    assert {s.category for s in truth} >= {"A3"}
+    radar = spec(
+        detection={
+            "model": "radar_equation",
+            "reference_snr_db": 10.0,
+            "reference_range_m": 60_000.0,
+            "false_alarm_density": 0.0,
+        }
+    )
+    result = ReplayEngine(truth, [radar], seed=11).run(START, END)
+    stats = result.stats("radar-1")
+    assert stats.pd_model == "radar_equation"
+    lo, hi = wilson_interval(stats.detected, stats.opportunities, z=3.29)
+    assert lo <= stats.configured_pd <= hi
+    assert "expected (radar equation)" in stats.summary()
+
+    opp = result.opportunities_table().to_pandas()
+    seen = opp[opp["in_coverage"]]
+    # Pd falls with range within a class, and bigger classes are easier to see.
+    for _, rows in seen.groupby("rcs_class"):
+        rows = rows.sort_values("slant_range_m")
+        if len(rows) > 10:
+            assert np.all(np.diff(rows["pd"].to_numpy()) <= 1e-12)
+    at = seen[seen["slant_range_m"].between(60_000, 80_000)].groupby("rcs_class")["pd"].mean()
+    if {"light", "large"} <= set(at.index):
+        assert at["light"] < at["large"]
+    by_segment = dict(zip(seen["segment_id"], seen["rcs_class"], strict=False))
+    for seg in truth:
+        if seg.segment_id in by_segment:
+            expected = {"A1": "light", "A2": "small", "A3": "large", "A5": "heavy"}
+            assert by_segment[seg.segment_id] == expected.get(seg.category or "", "unknown")
+
+    # A table of classes overrides the ADS-B category.
+    table = {seg.icao24: "rotorcraft" for seg in truth}
+    forced = ReplayEngine(truth, [radar], seed=11, aircraft_classes=table).run(START, END)
+    classes = forced.opportunities_table().to_pandas()["rcs_class"]
+    assert set(classes) == {"rotorcraft"}

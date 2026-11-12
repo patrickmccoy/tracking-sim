@@ -6,10 +6,9 @@ converts to SI radians once, when it is built. Specs are Pydantic models, so
 a YAML file with a typo or a missing field fails loudly at load time rather
 than halfway through a run.
 
-``type`` picks the spec class. Milestone 2 implements ``rotating_radar_2d``;
-the other sensor types in the design (``radar_3d``, ``passive_bearing``,
-``eo_ir``) and the ``radar_equation`` detection model are rejected with a
-pointer to the milestone that adds them.
+``type`` picks the spec class. ``rotating_radar_2d`` is implemented; the
+other sensor types in the design (``radar_3d``, ``passive_bearing``,
+``eo_ir``) are rejected with a pointer to the milestone that adds them.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from tracking_sim.config import load_yaml
 
@@ -133,23 +132,58 @@ class NoiseSpec(_Spec):
     bearing_sigma_deg: float = Field(ge=0)
 
 
+class RcsSpec(_Spec):
+    """Mean radar cross-section per aircraft class, m^2 (see ``sensors.detection``).
+
+    Rough values for an L/S-band surveillance radar; RCS depends on
+    frequency and aspect, so a sensor can override them.
+    """
+
+    light: float = Field(1.0, gt=0)
+    small: float = Field(2.0, gt=0)
+    large: float = Field(20.0, gt=0)
+    heavy: float = Field(60.0, gt=0)
+    rotorcraft: float = Field(3.0, gt=0)
+    unknown: float = Field(5.0, gt=0)
+
+
 class DetectionSpec(_Spec):
     """Whether a target in coverage is detected, and how much clutter appears.
 
+    ``constant``: every opportunity is detected with probability ``pd``.
+
+    ``radar_equation``: Pd from SNR, where a 1 m^2 target at
+    ``reference_range_m`` (slant) has ``reference_snr_db``, scaled by the
+    aircraft's RCS class (``rcs_m2``) and range to the fourth power, with
+    false-alarm probability ``pfa`` and a Swerling 1 (fluctuating, the
+    default) or 0 (steady) target. Aircraft with no known class use
+    ``default_class``.
+
     ``false_alarm_density`` is the expected number of false alarms per
-    square metre of coverage per scan.
+    square metre of coverage per scan, for either model.
     """
 
-    model: Literal["constant"] = "constant"
-    pd: float = Field(ge=0, le=1)
+    model: Literal["constant", "radar_equation"] = "constant"
+    pd: float | None = Field(None, ge=0, le=1)
+    reference_snr_db: float | None = None
+    reference_range_m: float | None = Field(None, gt=0)
+    pfa: float = Field(1e-6, gt=0, lt=1)
+    swerling: Literal[0, 1] = 1
+    rcs_m2: RcsSpec = Field(default_factory=RcsSpec)
+    default_class: Literal["light", "small", "large", "heavy", "rotorcraft", "unknown"] = "unknown"
     false_alarm_density: float = Field(0.0, ge=0)
 
-    @field_validator("model", mode="before")
-    @classmethod
-    def _planned(cls, value: Any) -> Any:
-        if value == "radar_equation":
-            raise ValueError("detection model 'radar_equation' arrives in milestone 4")
-        return value
+    @model_validator(mode="after")
+    def _check(self) -> DetectionSpec:
+        if self.model == "constant" and self.pd is None:
+            raise ValueError("detection model 'constant' needs 'pd'")
+        if self.model == "radar_equation" and (
+            self.reference_snr_db is None or self.reference_range_m is None
+        ):
+            raise ValueError(
+                "detection model 'radar_equation' needs 'reference_snr_db' and 'reference_range_m'"
+            )
+        return self
 
 
 class ResolutionSpec(_Spec):

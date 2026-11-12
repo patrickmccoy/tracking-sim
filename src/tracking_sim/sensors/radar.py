@@ -7,7 +7,9 @@ Per scan, for each aircraft, the radar:
 2. applies the geometry gates: slant range limits, azimuth sector,
    elevation limits, the 4/3-earth radar horizon and, with a terrain
    model, line of sight over the terrain;
-3. draws a detection with probability Pd;
+3. draws a detection with probability Pd, constant or from the radar
+   equation for the aircraft's RCS class and slant range
+   (``sensors.detection``);
 4. adds Gaussian noise to slant range and bearing;
 5. merges detected targets closer together than the resolution cell;
 6. adds false alarms across the coverage area;
@@ -39,6 +41,7 @@ from stonesoup.types.groundtruth import GroundTruthPath
 
 from tracking_sim.geo import LocalFrame, SensorSite, radar_horizon_visible
 from tracking_sim.geo.terrain import TerrainHorizon
+from tracking_sim.sensors.detection import AircraftClasses, pd_swerling, snr_radar_equation
 from tracking_sim.sensors.measurement import CartesianToBearingSlantRange, compass_to_bearing
 from tracking_sim.sensors.scan import BeamSchedule
 from tracking_sim.sensors.spec import RotatingRadar2DSpec
@@ -80,6 +83,8 @@ class Crossing:
     height_m: float
     state_vector: FloatArray = field(repr=False, compare=False)
     gate: str | None
+    rcs_class: str = "unknown"
+    pd: float = 1.0  # this crossing's probability of detection, if in coverage
 
     @property
     def in_coverage(self) -> bool:
@@ -130,6 +135,7 @@ class RotatingRadar2D:
         t_ref: datetime,
         *,
         terrain: TerrainHorizon | None = None,
+        classes: AircraftClasses | None = None,
     ) -> None:
         self.spec = spec
         self.frame = frame
@@ -139,6 +145,7 @@ class RotatingRadar2D:
         if terrain is not None and terrain.site != self.site:
             raise ValueError("the terrain horizon was built for a different site")
         self.terrain = terrain if spec.coverage.terrain_masking else None
+        self.classes = classes or AircraftClasses(default=spec.detection.default_class)
         self.beam = BeamSchedule(
             t_ref=self.t_ref.timestamp(),
             period_s=spec.scan.period_s,
@@ -215,6 +222,8 @@ class RotatingRadar2D:
         ground = np.hypot(local[:, 0], local[:, 1])
         height = self.site.height_above_site(pos)
         gates = self._gates(az, el, rng, ground, height)
+        rcs_class = self.classes.classify(seg.icao24, seg.category)
+        pd = self.pd(rng, rcs_class)
         scans = self.beam.scan_index(times)
         states = np.column_stack([pos[:, 0], vel[:, 0], pos[:, 1], vel[:, 1], pos[:, 2], vel[:, 2]])
         return [
@@ -232,6 +241,8 @@ class RotatingRadar2D:
                 height_m=float(height[i]),
                 state_vector=states[i],
                 gate=gates[i],
+                rcs_class=rcs_class,
+                pd=float(pd[i]),
             )
             for i in range(len(times))
         ]
@@ -291,7 +302,8 @@ class RotatingRadar2D:
         start, end = self.scan_window(scan)
         opportunities = [c for c in crossings if c.in_coverage]
         n = len(opportunities)
-        hits = streams.detection.random(n) < self.spec.detection.pd
+        pd = np.array([c.pd for c in opportunities])
+        hits = streams.detection.random(n) < pd
         noise = streams.noise.standard_normal((n, 2)) * [self.bearing_sigma, self.range_sigma_m]
         hit_index = [i for i in range(n) if hits[i]]
         detections: list[Detection] = []
@@ -313,6 +325,18 @@ class RotatingRadar2D:
             detected=detected,
             detections=detections,
         )
+
+    def pd(self, slant_range_m: Any, rcs_class: str) -> FloatArray:
+        """Probability of detection at these slant ranges for one RCS class."""
+        det = self.spec.detection
+        r = np.asarray(slant_range_m, dtype=float)
+        if det.model == "constant":
+            assert det.pd is not None
+            return np.full(r.shape, det.pd)
+        assert det.reference_snr_db is not None and det.reference_range_m is not None
+        rcs = getattr(det.rcs_m2, rcs_class)
+        snr = snr_radar_equation(r, rcs, det.reference_snr_db, det.reference_range_m)
+        return pd_swerling(snr, det.pfa, det.swerling)
 
     @property
     def coverage_area_m2(self) -> float:
@@ -419,6 +443,7 @@ class RotatingRadar2D:
                 "true_elevation_deg": float(np.degrees(first.elevation)),
                 "true_slant_range_m": first.slant_range,
                 "true_ground_range_m": first.ground_range,
+                "rcs_class": first.rcs_class,
                 "merged_segment_ids": [c.segment_id for c in members],
             }
         )

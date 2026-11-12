@@ -66,8 +66,29 @@ def test_invalid_specs_fail(change: dict[str, Any]) -> None:
 def test_planned_types_and_models_point_at_their_milestone() -> None:
     with pytest.raises(ValueError, match="milestone 4"):
         parse_sensor_spec(minimal(type="passive_bearing"))
-    with pytest.raises(ValidationError, match="milestone 4"):
+    with pytest.raises(ValueError, match="planned"):
+        parse_sensor_spec(minimal(type="radar_3d"))
+
+
+def test_radar_equation_detection() -> None:
+    spec = parse_sensor_spec(
+        minimal(
+            detection={
+                "model": "radar_equation",
+                "reference_snr_db": 13,
+                "reference_range_m": 50_000,
+                "rcs_m2": {"heavy": 100},
+            }
+        )
+    )
+    det = spec.detection
+    assert det.pd is None and det.pfa == 1e-6 and det.swerling == 1
+    assert det.rcs_m2.heavy == 100 and det.rcs_m2.large == 20  # others keep defaults
+    assert det.default_class == "unknown"
+    with pytest.raises(ValidationError, match="reference_snr_db"):
         parse_sensor_spec(minimal(detection={"model": "radar_equation", "pd": 0.9}))
+    with pytest.raises(ValidationError, match="needs 'pd'"):
+        parse_sensor_spec(minimal(detection={"model": "constant"}))
     with pytest.raises(ValidationError):
         parse_sensor_spec(minimal(type="sonar"))
 

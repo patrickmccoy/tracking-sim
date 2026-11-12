@@ -49,7 +49,9 @@ class ReceiverConfig:
     ``altitude_kind`` (``"baro"`` or ``"geom"``) says what the value in
     ``altitude_field`` really is; by default it is geometric only when the
     field is ``alt_geom_ft``. ``report_geom`` also fills ``alt_geom_ft`` with
-    geometric height, as ``aircraft.json`` does.
+    geometric height, as ``aircraft.json`` does. ``report_category`` adds
+    each flight's ADS-B emitter category to its identity messages, as
+    ``aircraft.json`` does too.
 
     With ``duplicate_of`` set to another receiver's ``source_id``, this
     receiver re-hears that receiver's messages: same decoded values, a later
@@ -65,6 +67,7 @@ class ReceiverConfig:
     outlier_count: int = 0
     duplicate_of: str | None = None
     altitude_kind: str | None = None
+    report_category: bool = False
     report_geom: bool = False
 
 
@@ -83,6 +86,22 @@ class SyntheticFlight:
     track_deg: FloatArray
     vrate_mps: FloatArray
     on_ground: bool = False
+
+    @property
+    def category(self) -> str:
+        """An ADS-B emitter category fitting the flight's kind (no random draws).
+
+        Derived from the ICAO address so it never changes the generator's
+        random stream: light aircraft and taxiing ones are A1; arrivals and
+        departures mostly A3 (large) with some A2 (small); overflights a mix
+        of A3 and A5 (heavy).
+        """
+        h = zlib.crc32(self.icao24.encode())
+        if self.kind in ("light", "taxi"):
+            return "A1"
+        if self.kind == "overflight":
+            return "A5" if h % 3 == 0 else "A3"
+        return "A2" if h % 4 == 0 else "A3"
 
     def sample(self, t: FloatArray | float) -> dict[str, FloatArray]:
         """Linearly interpolate the trajectory at ``t`` (seconds since epoch)."""
@@ -450,6 +469,7 @@ def _hear(
                     lon=None,
                     source_id=receiver.source_id,
                     callsign=flight.callsign,
+                    category=flight.category if receiver.report_category else None,
                 )
             )
 

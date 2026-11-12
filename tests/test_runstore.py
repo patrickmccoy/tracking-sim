@@ -169,3 +169,16 @@ def test_terrain_is_part_of_the_scenario_and_the_run_id(tmp_path: Path) -> None:
     ridged.write_text(yaml.safe_dump(data))
     with pytest.raises(ValueError, match="ridge"):
         load_scenario(ridged)
+
+
+def test_aircraft_classes_csv_is_a_run_input(tmp_path: Path) -> None:
+    path = scenario_file(tmp_path)
+    base, _ = RunStore(tmp_path / "runs").plan(load_scenario(path))
+    (tmp_path / "classes.csv").write_text("icao24,class\nabc123,heavy\n")
+    data = yaml.safe_load(path.read_text())
+    data["truth"]["aircraft_classes"] = "classes.csv"
+    path.write_text(yaml.safe_dump(data))
+    scenario = load_scenario(path)
+    assert scenario.aircraft_classes() == {"abc123": "heavy"}
+    rid, manifest = RunStore(tmp_path / "runs").plan(scenario)
+    assert rid != base and len(manifest["inputs"]["aircraft_classes"]) == 64

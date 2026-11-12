@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import heapq
 import math
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -37,6 +37,7 @@ from stonesoup.types.groundtruth import GroundTruthPath
 
 from tracking_sim.geo import SensorSite
 from tracking_sim.geo.terrain import ElevationModel, TerrainHorizon
+from tracking_sim.sensors.detection import AircraftClasses, RcsClass
 from tracking_sim.sensors.measurement import bearing_to_compass
 from tracking_sim.sensors.radar import RotatingRadar2D, ScanResult
 from tracking_sim.sensors.spec import RotatingRadar2DSpec
@@ -67,10 +68,11 @@ class DetectionStats:
     crossings: int
     opportunities: int
     detected: int
-    configured_pd: float
+    configured_pd: float  # the mean Pd over the opportunities (constant: the spec's pd)
     false_alarms: int
     expected_false_alarms_per_scan: float
     gated: dict[str, int]
+    pd_model: str = "constant"
 
     @property
     def achieved_pd(self) -> float:
@@ -83,7 +85,12 @@ class DetectionStats:
 
     @property
     def pd_consistent(self) -> bool:
-        """True when the configured Pd lies inside the 95% interval."""
+        """True when the configured (or expected) Pd lies inside the 95% interval.
+
+        With the radar equation each opportunity has its own Pd, and the
+        count is Poisson-binomial, whose variance is at most the binomial's at
+        the same mean, so the interval is, if anything, conservative.
+        """
         lo, hi = self.pd_interval
         return lo <= self.configured_pd <= hi
 
@@ -95,11 +102,12 @@ class DetectionStats:
         lo, hi = self.pd_interval
         gated = ", ".join(f"{k} {v}" for k, v in self.gated.items() if v) or "none"
         verdict = "consistent" if self.pd_consistent else "NOT consistent"
+        label = "configured" if self.pd_model == "constant" else "expected (radar equation)"
         return (
             f"{self.sensor_id}: {self.scans} scans, {self.crossings} beam crossings, "
             f"gated: {gated}\n"
             f"  achieved Pd {self.achieved_pd:.3f} ({self.detected}/{self.opportunities}), "
-            f"95% interval [{lo:.3f}, {hi:.3f}], configured {self.configured_pd:.3f}: {verdict}\n"
+            f"95% interval [{lo:.3f}, {hi:.3f}], {label} {self.configured_pd:.3f}: {verdict}\n"
             f"  false alarms {self.false_alarms_per_scan:.1f} per scan "
             f"(expected {self.expected_false_alarms_per_scan:.1f})"
         )
@@ -132,6 +140,7 @@ class SimulationResult:
         scans = [s for s in self.scans if s.sensor_id == sensor_id]
         gated: dict[str, int] = {}
         crossings = opportunities = detected = false_alarms = 0
+        pd_sum = 0.0
         for s in scans:
             crossings += len(s.crossings)
             false_alarms += len(s.clutter)
@@ -139,6 +148,7 @@ class SimulationResult:
                 if c.gate is None:
                     opportunities += 1
                     detected += hit
+                    pd_sum += c.pd
                 else:
                     gated[c.gate] = gated.get(c.gate, 0) + 1
         return DetectionStats(
@@ -147,10 +157,11 @@ class SimulationResult:
             crossings=crossings,
             opportunities=opportunities,
             detected=detected,
-            configured_pd=radar.spec.detection.pd,
+            configured_pd=pd_sum / opportunities if opportunities else float("nan"),
             false_alarms=false_alarms,
             expected_false_alarms_per_scan=radar.expected_false_alarms,
             gated=gated,
+            pd_model=radar.spec.detection.model,
         )
 
     def summary(self) -> str:
@@ -211,6 +222,8 @@ class SimulationResult:
                 rows["gate"].append(c.gate)
                 rows["in_coverage"].append(c.gate is None)
                 rows["detected"].append(bool(hit))
+                rows["rcs_class"].append(c.rcs_class)
+                rows["pd"].append(c.pd)
         return pa.table(rows, schema=_OPPORTUNITY_SCHEMA)
 
     def write(self, directory: str | Path) -> dict[str, Path]:
@@ -265,6 +278,8 @@ _OPPORTUNITY_SCHEMA = pa.schema(
         ("gate", pa.string()),
         ("in_coverage", pa.bool_()),
         ("detected", pa.bool_()),
+        ("rcs_class", pa.string()),
+        ("pd", pa.float64()),
     ]
 )
 
@@ -275,7 +290,9 @@ class ReplayEngine:
     ``truth_step_s`` is the spacing of the Stone Soup ``GroundTruthPath``
     states that detections link to (built once per engine). With a
     ``terrain`` model, each sensor also masks targets behind terrain (unless
-    its spec turns ``terrain_masking`` off).
+    its spec turns ``terrain_masking`` off). ``aircraft_classes`` maps ICAO
+    addresses to RCS classes for the radar-equation Pd, ahead of the ADS-B
+    emitter category.
     """
 
     def __init__(
@@ -286,6 +303,7 @@ class ReplayEngine:
         seed: int,
         truth_step_s: float = 1.0,
         terrain: ElevationModel | None = None,
+        aircraft_classes: Mapping[str, RcsClass] | None = None,
     ) -> None:
         ids = [s.id for s in sensors]
         if len(set(ids)) != len(ids):
@@ -297,6 +315,7 @@ class ReplayEngine:
         self.seed = seed
         self.truth_step_s = truth_step_s
         self.terrain = terrain
+        self.aircraft_classes = dict(aircraft_classes or {})
         self._paths: dict[str, GroundTruthPath] | None = None
         self._horizons: dict[str, TerrainHorizon] = {}
 
@@ -339,7 +358,10 @@ class ReplayEngine:
         return self._horizons[spec.id]
 
     def _radar(self, spec: RotatingRadar2DSpec, start: datetime) -> RotatingRadar2D:
-        return RotatingRadar2D(spec, self.truth.frame, start, terrain=self.horizon(spec))
+        classes = AircraftClasses(self.aircraft_classes, default=spec.detection.default_class)
+        return RotatingRadar2D(
+            spec, self.truth.frame, start, terrain=self.horizon(spec), classes=classes
+        )
 
     def _whole_scans(self, spec: RotatingRadar2DSpec, start: datetime, end: datetime) -> int:
         return int((end - start).total_seconds() // spec.scan.period_s)

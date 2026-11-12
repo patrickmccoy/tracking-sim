@@ -41,6 +41,7 @@ from tracking_sim.eval.metrics import MetricSettings, TrackerScore, comparison_t
 from tracking_sim.eval.scoring import ScoringGrid, scoring_grid, segment_of
 from tracking_sim.geo import LocalFrame
 from tracking_sim.geo.terrain import ElevationModel, FlatTerrain, SyntheticRidge
+from tracking_sim.sensors.detection import RcsClass, load_aircraft_classes
 from tracking_sim.sensors.spec import RotatingRadar2DSpec, load_sensor_spec, parse_sensor_spec
 from tracking_sim.sim.engine import ReplayEngine, SimulationResult
 from tracking_sim.tracking.runner import TrackerRun, detection_batches, run_tracker
@@ -68,6 +69,9 @@ class TruthSpec(_Spec):
     path: str
     window: tuple[datetime, datetime] | None = None
     tz: str = Field("UTC", description="time zone of SBS timestamps (sbs only)")
+    aircraft_classes: str | None = Field(
+        None, description="optional icao24,class CSV of RCS classes (radar-equation Pd)"
+    )
 
     @model_validator(mode="after")
     def _check(self) -> TruthSpec:
@@ -167,6 +171,8 @@ class Scenario:
         from tracking_sim.eval.runstore import input_digest
 
         digests = {"truth": input_digest(self.truth_path)}
+        if self.aircraft_classes_path is not None:
+            digests["aircraft_classes"] = input_digest(self.aircraft_classes_path)
         terrain = self.terrain_model()
         if terrain is not None:
             digests["terrain"] = terrain.digest()
@@ -175,6 +181,15 @@ class Scenario:
     @property
     def truth_path(self) -> Path:
         return (self.base_dir / self.spec.truth.path).resolve()
+
+    @property
+    def aircraft_classes_path(self) -> Path | None:
+        path = self.spec.truth.aircraft_classes
+        return None if path is None else (self.base_dir / path).resolve()
+
+    def aircraft_classes(self) -> dict[str, RcsClass]:
+        path = self.aircraft_classes_path
+        return {} if path is None else load_aircraft_classes(path)
 
     @property
     def frame(self) -> LocalFrame:
@@ -317,7 +332,11 @@ def run_scenario(scenario: Scenario) -> ScenarioResult:
     window = scenario.spec.truth.window
     start, end = (window[0], window[1]) if window else (None, None)
     engine = ReplayEngine(
-        truth, scenario.sensors, seed=scenario.spec.seed, terrain=scenario.terrain_model()
+        truth,
+        scenario.sensors,
+        seed=scenario.spec.seed,
+        terrain=scenario.terrain_model(),
+        aircraft_classes=scenario.aircraft_classes(),
     )
     simulation = engine.run(start, end)
     grid = scoring_grid(truth, simulation)
