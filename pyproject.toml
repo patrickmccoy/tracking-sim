@@ -23,6 +23,8 @@ dependencies = [
 tracking-sim = "tracking_sim.cli:main"
 
 [project.optional-dependencies]
+# Terrain masking from Copernicus DEM tiles (GeoTIFF with a floating-point predictor).
+terrain = ["tifffile>=2024.1", "imagecodecs>=2024.1"]
 # Running and plotting from the notebooks.
 notebook = ["jupyterlab>=4.2", "matplotlib>=3.8", "pandas>=2.2", "nbclient>=0.10", "ipykernel>=6.29"]
 
@@ -64,5 +66,5 @@ warn_unreachable = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["stonesoup.*", "pymap3d.*", "pyarrow.*", "scipy.*"]
+module = ["stonesoup.*", "pymap3d.*", "pyarrow.*", "scipy.*", "tifffile.*", "imagecodecs.*"]
 ignore_missing_imports = true
