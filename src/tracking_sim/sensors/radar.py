@@ -8,6 +8,7 @@ Per scan, for each aircraft, the radar:
    elevation limits and the 4/3-earth radar horizon;
 3. draws a detection with probability Pd;
 4. adds Gaussian noise to slant range and bearing;
+5. merges detected targets closer together than the resolution cell;
 
 and emits Stone Soup ``TrueDetection`` objects carrying the slant-range
 measurement model and a link to the truth path. Every crossing, detected or
@@ -262,20 +263,22 @@ class RotatingRadar2D:
 
         ``crossings`` must be this scan's, in time order. Pd and noise are
         drawn for every opportunity, detected or not, so the noise on one
-        target does not depend on whether another was detected.
+        target does not depend on whether another was detected. Detected
+        targets the radar cannot resolve then merge into one detection.
         """
         start, end = self.scan_window(scan)
         opportunities = [c for c in crossings if c.in_coverage]
         n = len(opportunities)
         hits = streams.detection.random(n) < self.spec.detection.pd
         noise = streams.noise.standard_normal((n, 2)) * [self.bearing_sigma, self.range_sigma_m]
+        hit_index = [i for i in range(n) if hits[i]]
         detections: list[Detection] = []
-        detected_ids: set[tuple[str, float]] = set()
-        for c, hit, (nb, nr) in zip(opportunities, hits, noise, strict=True):
-            if not hit:
-                continue
-            detected_ids.add((c.segment_id, c.t))
-            detections.append(self._true_detection(c, nb, nr, paths))
+        for cluster in self._resolve([opportunities[i] for i in hit_index]):
+            members = [hit_index[k] for k in cluster]
+            detections.append(
+                self._true_detection([opportunities[i] for i in members], noise[members], paths)
+            )
+        detected_ids = {(opportunities[i].segment_id, opportunities[i].t) for i in hit_index}
         detected = [(c.segment_id, c.t) in detected_ids for c in crossings]
         return ScanResult(
             sensor_id=self.sensor_id,
@@ -287,6 +290,38 @@ class RotatingRadar2D:
             detections=detections,
         )
 
+    def _resolve(self, targets: Sequence[Crossing]) -> list[list[int]]:
+        """Group targets closer than the resolution cell in both range and bearing.
+
+        Clusters are single-linkage on the true slant range and azimuth, so
+        a chain of close targets merges into one. Returns lists of indices
+        into ``targets``, each in time order, clusters ordered by their
+        first member.
+        """
+        res = self.spec.resolution
+        n = len(targets)
+        parent = list(range(n))
+
+        def find(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        if res.range_m > 0 and res.bearing_deg > 0 and n > 1:
+            rng = np.array([c.slant_range for c in targets])
+            az = np.array([c.azimuth for c in targets])
+            cell_az = np.radians(res.bearing_deg)
+            for i in range(n):
+                d_az = np.abs((az[i + 1 :] - az[i] + np.pi) % (2 * np.pi) - np.pi)
+                close = (np.abs(rng[i + 1 :] - rng[i]) < res.range_m) & (d_az < cell_az)
+                for j in np.nonzero(close)[0] + i + 1:
+                    parent[find(int(j))] = find(i)
+        clusters: dict[int, list[int]] = {}
+        for i in range(n):
+            clusters.setdefault(find(i), []).append(i)
+        return sorted(clusters.values(), key=lambda members: members[0])
+
     def _metadata(self, scan: int, t: float, kind: str) -> dict[str, Any]:
         return {
             "sensor_id": self.sensor_id,
@@ -297,29 +332,38 @@ class RotatingRadar2D:
 
     def _true_detection(
         self,
-        c: Crossing,
-        bearing_noise: float,
-        range_noise: float,
+        members: Sequence[Crossing],
+        noise: FloatArray,
         paths: Mapping[str, GroundTruthPath],
     ) -> TrueDetection:
-        bearing = Bearing(float(compass_to_bearing(c.azimuth)) + bearing_noise)
-        slant = max(c.slant_range + range_noise, 0.0)
-        metadata = self._metadata(c.scan, c.t, "target")
+        """One detection from one target, or from several unresolved ones.
+
+        Unresolved targets give a single plot at the mean of their noisy
+        measurements, timed and linked to the first of them; all of them are
+        listed in ``merged_segment_ids``.
+        """
+        first = members[0]
+        bearings = np.array([float(compass_to_bearing(c.azimuth)) for c in members]) + noise[:, 0]
+        ranges = np.array([c.slant_range for c in members]) + noise[:, 1]
+        bearing = Bearing(float(np.arctan2(np.sin(bearings).mean(), np.cos(bearings).mean())))
+        slant = max(float(ranges.mean()), 0.0)
+        metadata = self._metadata(first.scan, first.t, "target")
         metadata.update(
             {
-                "segment_id": c.segment_id,
-                "icao24": c.icao24,
-                "callsign": c.callsign,
-                "true_azimuth_deg": float(np.degrees(c.azimuth)),
-                "true_elevation_deg": float(np.degrees(c.elevation)),
-                "true_slant_range_m": c.slant_range,
-                "true_ground_range_m": c.ground_range,
+                "segment_id": first.segment_id,
+                "icao24": first.icao24,
+                "callsign": first.callsign,
+                "true_azimuth_deg": float(np.degrees(first.azimuth)),
+                "true_elevation_deg": float(np.degrees(first.elevation)),
+                "true_slant_range_m": first.slant_range,
+                "true_ground_range_m": first.ground_range,
+                "merged_segment_ids": [c.segment_id for c in members],
             }
         )
         return TrueDetection(
             state_vector=StateVector([bearing, slant]),
-            timestamp=c.time,
+            timestamp=first.time,
             measurement_model=self.measurement_model,
-            groundtruth_path=paths[c.segment_id],
+            groundtruth_path=paths[first.segment_id],
             metadata=metadata,
         )

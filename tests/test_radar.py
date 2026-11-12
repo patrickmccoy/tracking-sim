@@ -162,3 +162,52 @@ def test_segments_without_altitude_are_skipped() -> None:
     no_alt = build_truth(traffic.records, FRAME, TruthBuilderConfig(altitude_preference=["baro"]))
     crossings, skipped = radar().crossings(no_alt, START, END)
     assert not crossings and len(skipped) == len(no_alt)
+
+
+def crossing(segment_id: str, t: float, az_deg: float, rng: float) -> Crossing:
+    return Crossing(
+        sensor_id="radar-1",
+        scan=0,
+        t=START.timestamp() + t,
+        segment_id=segment_id,
+        icao24=segment_id[:6],
+        callsign=None,
+        azimuth=float(np.radians(az_deg)),
+        elevation=0.05,
+        slant_range=rng,
+        ground_range=rng,
+        height_m=3000.0,
+        state_vector=np.zeros(6),
+        gate=None,
+    )
+
+
+def test_unresolved_targets_merge_into_one_detection() -> None:
+    r = radar(
+        noise={"range_sigma_m": 0, "bearing_sigma_deg": 0},
+        detection={"pd": 1.0},
+        resolution={"range_m": 150, "bearing_deg": 1.5},
+    )
+    items = [
+        crossing("aaaaaa-0", 1.0, 72.0, 40_000.0),
+        crossing("bbbbbb-0", 1.01, 72.5, 40_100.0),  # inside a's cell
+        crossing("cccccc-0", 1.5, 108.0, 40_000.0),  # far in bearing
+        crossing("dddddd-0", 3.0, 216.0, 60_000.0),  # a chain: d-e and e-f close,
+        crossing("eeeeee-0", 3.01, 217.0, 60_120.0),  # d-f not, all three merge
+        crossing("ffffff-0", 3.02, 218.0, 60_240.0),
+    ]
+    paths = {c.segment_id: GroundTruthPath(id=c.segment_id) for c in items}
+    result = r.observe(0, items, sensor_streams(1, "radar-1"), paths)
+    assert result.detected == [True] * 6
+    merged = [d.metadata["merged_segment_ids"] for d in result.true_detections]
+    assert merged == [["aaaaaa-0", "bbbbbb-0"], ["cccccc-0"], ["dddddd-0", "eeeeee-0", "ffffff-0"]]
+    first = result.true_detections[0]
+    assert first.groundtruth_path is paths["aaaaaa-0"]
+    assert float(first.state_vector[1, 0]) == pytest.approx(40_050.0)
+    assert float(bearing_to_compass(float(first.state_vector[0, 0]))) == pytest.approx(
+        np.radians(72.25)
+    )
+
+    no_merge = radar(detection={"pd": 1.0}, resolution={"range_m": 0, "bearing_deg": 0})
+    result = no_merge.observe(0, items, sensor_streams(1, "radar-1"), paths)
+    assert len(result.true_detections) == 6
