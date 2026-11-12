@@ -59,8 +59,42 @@ To close milestone 1 on real data:
 4. Run the notebook with `TRACKING_SIM_RECORDING` and `TRACKING_SIM_SECOND` set.
 5. Confirm which Dump1090 fork and SBS time zone the receiver uses (open question 2).
 
-Then milestone 2: `SensorSpec` and YAML loading, the rotating 2D radar, and
-the seeded replay engine.
+## Milestone 2: one sensor
+
+Plan (approved at the start of the milestone):
+
+1. `SensorSpec` and YAML loading: Pydantic models for the design doc's spec,
+   a discriminated union on `type` (only `rotating_radar_2d` for now), and
+   an example spec at KBJC.
+2. Sensor geometry: a per-sensor local frame, slant range, bearing and
+   elevation from the antenna, and a 4/3-earth radar horizon.
+3. Beam-crossing timing: solve when the rotating beam crosses each
+   aircraft, and sample truth at that moment.
+4. Detections: range, sector, elevation and horizon gates, constant Pd,
+   range and bearing noise, Stone Soup `TrueDetection`s carrying a
+   slant-range measurement model.
+5. Resolution: merge targets closer than the range-by-bearing cell.
+6. False alarms: Poisson clutter over the coverage area, as `Clutter`.
+7. Seeded replay engine: scans in time order across sensors, per-sensor
+   random streams from the run seed, detections and opportunities to
+   Parquet, determinism and achieved-Pd tests.
+8. Notebook `02_one_sensor.ipynb`: detections over truth, achieved Pd
+   against range, false alarms, determinism.
+9. Docs: this file, DECISIONS.md, README.
+
+Decided with the plan: the radar measures **slant range** (as real 2D
+radars do), not ground range, so trackers see the real altitude ambiguity.
+No CLI command yet; `tracking-sim run` waits for scenario files (milestone 4).
+
+Status:
+
+- [ ] `SensorSpec` and YAML loading
+- [ ] Rotating 2D radar with beam-crossing timing, range and bearing noise,
+  constant Pd, false alarms, radar horizon
+- [ ] Seeded replay engine
+
+Done when detections plot over truth, achieved Pd matches the configured
+value within sampling error, and two runs with one seed are identical.
 
 ## Notes for the next session
 
