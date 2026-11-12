@@ -5,8 +5,8 @@ from tracking_sim.geo import LocalFrame, enu_velocity
 
 
 def test_origin_maps_to_zero_and_round_trips() -> None:
-    frame = LocalFrame(39.98, -105.13, 1650.0)
-    e, n, u = frame.to_enu(39.98, -105.13, 1650.0)
+    frame = LocalFrame(39.9088, -105.1172, 1729.0)
+    e, n, u = frame.to_enu(39.9088, -105.1172, 1729.0)
     assert np.allclose([e, n, u], 0.0, atol=1e-6)
     lat = np.array([39.0, 40.5, 41.0])
     lon = np.array([-106.0, -105.0, -103.5])

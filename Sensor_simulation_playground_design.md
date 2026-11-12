@@ -125,7 +125,7 @@ Example spec (values are illustrative):
 ```yaml
 id: radar-1
 type: rotating_radar_2d      # or radar_3d, passive_bearing, eo_ir
-position: {lat: 39.98, lon: -105.13, alt_m: 1650, mast_m: 15}
+position: {lat: 39.9088, lon: -105.1172, alt_m: 1729, mast_m: 15}
 coverage:
   range_min_m: 500
   range_max_m: 110000
@@ -187,7 +187,7 @@ A scenario file ties a run together:
 
 ```yaml
 name: front-range-evening
-origin: {lat: 39.98, lon: -105.13}
+origin: {lat: 39.9088, lon: -105.1172}
 truth:
   source: recording
   path: data/2026-11-01.parquet

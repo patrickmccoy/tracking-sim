@@ -175,7 +175,7 @@ uv run tracking-sim info data/2026-11-01.parquet
 
 ```sh
 export TRACKING_SIM_RECORDING=data/2026-11-01.parquet
-export TRACKING_SIM_ORIGIN=39.98,-105.13,1650        # receiver lat, lon, height (m)
+export TRACKING_SIM_ORIGIN=39.9088,-105.1172,1729  # receiver lat, lon, height (m)
 export TRACKING_SIM_WINDOW=2026-11-01T23:00Z,2026-11-02T00:00Z   # optional
 uv run jupyter lab notebooks/01_truth_playground.ipynb
 ```
@@ -229,7 +229,7 @@ from tracking_sim.truth.sources.recording import RecordingSource
 source = RecordingSource("tests/data/synthetic_1h.parquet")
 records = list(source.replay())  # or replay(start, end) with aware datetimes
 
-frame = LocalFrame(lat=39.98, lon=-105.13, alt_m=1650.0)  # your receiver or scenario origin
+frame = LocalFrame(lat=39.9088, lon=-105.1172, alt_m=1729.0)  # your receiver or scenario origin
 truth = build_truth(records, frame)
 print(truth.stats)
 

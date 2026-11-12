@@ -281,7 +281,7 @@ def generate_traffic(
     seed: int = 1,
     epoch: datetime = datetime(2026, 11, 1, 23, 0, tzinfo=UTC),
     duration_s: float = 3600.0,
-    origin: tuple[float, float, float] = (39.98, -105.13, 1650.0),
+    origin: tuple[float, float, float] = (39.9088, -105.1172, 1729.0),
     receivers: tuple[ReceiverConfig, ...] = (
         ReceiverConfig("synthetic:rx1", outlier_count=3),
         ReceiverConfig("synthetic:rx2", hear_probability=0.4, duplicate_of="synthetic:rx1"),
@@ -294,7 +294,8 @@ def generate_traffic(
 ) -> SyntheticTraffic:
     """Generate an hour (by default) of seeded synthetic traffic.
 
-    ``origin`` is (lat, lon, ground altitude in metres). The longest
+    ``origin`` is (lat, lon, ground altitude in metres); the default is
+    Rocky Mountain Metropolitan Airport (KBJC). The longest
     overflight gets a coverage gap of ``gap_s`` seconds in the middle of its
     track, during which no receiver hears it. The first receiver with
     ``outlier_count > 0`` injects that many bad-decode position jumps.
