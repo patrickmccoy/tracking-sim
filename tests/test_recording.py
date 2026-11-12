@@ -87,3 +87,21 @@ def test_unknown_suffix_and_missing_file(tmp_path: Path) -> None:
         RecordingWriter(tmp_path / "rec.csv")
     with pytest.raises(FileNotFoundError):
         read_records(tmp_path / "missing.parquet")
+
+
+def test_category_round_trips_and_old_files_still_read(tmp_path: Path) -> None:
+    import pyarrow.parquet as pq
+
+    from tracking_sim.truth import TruthRecord
+
+    ts = datetime(2026, 11, 1, 23, 0, tzinfo=UTC)
+    records = [TruthRecord("abc123", ts, 39.5, -105.0, "t", category="A1", nacp=9)]
+    for name in ("r.parquet", "r.jsonl"):
+        write_records(tmp_path / name, records)
+        (back,) = read_records(tmp_path / name)
+        assert back.category == "A1" and back.nacp == 9
+    # A recording written before the category column existed.
+    table = pq.read_table(tmp_path / "r.parquet").drop(["category"])
+    pq.write_table(table, tmp_path / "old.parquet")
+    (old,) = read_records(tmp_path / "old.parquet")
+    assert old.category is None and old.nacp == 9

@@ -51,6 +51,7 @@ RECORDING_SCHEMA = pa.schema(
         pa.field("on_ground", pa.bool_()),
         pa.field("nic", pa.int16()),
         pa.field("nacp", pa.int16()),
+        pa.field("category", pa.string()),
     ]
 )
 assert tuple(RECORDING_SCHEMA.names) == TRUTH_RECORD_FIELDS

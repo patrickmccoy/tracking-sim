@@ -53,6 +53,7 @@ class TruthRecord:
     on_ground: bool | None = None
     nic: int | None = None
     nacp: int | None = None
+    category: str | None = None
     _extra: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -64,6 +65,10 @@ class TruthRecord:
         if self.callsign is not None:
             callsign = self.callsign.strip()
             object.__setattr__(self, "callsign", callsign or None)
+        if self.category is not None:
+            # ADS-B emitter category, e.g. "A3" (large aircraft).
+            category = self.category.strip().upper()
+            object.__setattr__(self, "category", category or None)
         if (self.lat is None) != (self.lon is None):
             raise ValueError("lat and lon must both be set or both be None")
         if (

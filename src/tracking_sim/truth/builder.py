@@ -76,6 +76,9 @@ class TruthBuilderConfig(BaseModel):
     default_horizontal_sigma_m: float = Field(
         30.0, description="truth sigma for sources without NACp"
     )
+    sigma_from_nacp: bool = Field(
+        True, description="set a segment's truth sigma from the median NACp of its positions"
+    )
     altitude_preference: list[AltitudeReference] = Field(
         default_factory=lambda: list(_DEFAULT_ALTITUDE_PREFERENCE)
     )
@@ -130,6 +133,7 @@ class FlightSegment:
     horizontal_sigma_m: float
     smoothing: Literal["spline", "linear"] = "spline"
     smoothing_lam: float | None = None
+    category: str | None = None  # ADS-B emitter category, e.g. "A3"
     _trajectory: Trajectory | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
@@ -157,6 +161,7 @@ class FlightSegment:
             "alt_reference": self.alt_reference,
             "horizontal_sigma_m": self.horizontal_sigma_m,
             "on_ground": self.on_ground,
+            "category": self.category,
             "source_ids": self.source_ids,
         }
 
@@ -316,6 +321,8 @@ class _Track:
     )
     velocities: list[tuple[float, float, float, float | None]] = field(default_factory=list)
     callsigns: list[tuple[float, str]] = field(default_factory=list)
+    categories: list[tuple[float, str]] = field(default_factory=list)
+    nacps: list[tuple[float, int]] = field(default_factory=list)
 
 
 def _collect(
@@ -356,6 +363,10 @@ def _collect(
                     track.altitudes[ref].append((ts, value * FT_TO_M))
         if record.callsign:
             track.callsigns.append((ts, record.callsign))
+        if record.category:
+            track.categories.append((ts, record.category))
+        if record.nacp is not None and record.lat is not None and not dropped:
+            track.nacps.append((ts, record.nacp))
         if dropped:
             stats.duplicates_dropped += 1
     return tracks
@@ -418,6 +429,50 @@ def _callsign(track: _Track, t0: float, t1: float) -> str | None:
     if not within:
         return None
     return Counter(within).most_common(1)[0][0]
+
+
+def _category(track: _Track, t0: float, t1: float) -> str | None:
+    within = [c for ts, c in track.categories if t0 - 60.0 <= ts <= t1 + 60.0]
+    if not within:
+        return None
+    return Counter(within).most_common(1)[0][0]
+
+
+# NACp: the 95% horizontal position error bound (EPU), metres.
+NACP_EPU_M = {
+    11: 3.0,
+    10: 10.0,
+    9: 30.0,
+    8: 92.6,
+    7: 185.2,
+    6: 555.6,
+    5: 926.0,
+    4: 1852.0,
+    3: 3704.0,
+    2: 7408.0,
+    1: 18520.0,
+}
+
+
+def nacp_sigma_m(nacp: int) -> float | None:
+    """One-sigma horizontal error per axis for a NACp, or None if it means nothing.
+
+    NACp bounds the 95% radial error (EPU). For a circular 2D Gaussian the 95%
+    radius is 2.45 sigma, so sigma = EPU / 2.45. NACp 0 means unknown.
+    """
+    epu = NACP_EPU_M.get(int(nacp))
+    return None if epu is None else epu / 2.45
+
+
+def _segment_sigma(track: _Track, t0: float, t1: float, config: TruthBuilderConfig) -> float:
+    if not config.sigma_from_nacp:
+        return config.default_horizontal_sigma_m
+    values = [n for ts, n in track.nacps if t0 <= ts <= t1 and nacp_sigma_m(n) is not None]
+    if not values:
+        return config.default_horizontal_sigma_m
+    median = int(np.median(values))
+    sigma = nacp_sigma_m(median)
+    return config.default_horizontal_sigma_m if sigma is None else sigma
 
 
 def build_segments(
@@ -493,9 +548,10 @@ def build_segments(
                 enu=enu,
                 reported_velocity=_segment_velocity(track, t, config.velocity_merge_window_s),
                 on_ground=on_ground,
-                horizontal_sigma_m=config.default_horizontal_sigma_m,
+                horizontal_sigma_m=_segment_sigma(track, float(t[0]), float(t[-1]), config),
                 smoothing=config.smoothing,
                 smoothing_lam=config.smoothing_lam,
+                category=_category(track, float(t[0]), float(t[-1])),
             )
         )
     return segments

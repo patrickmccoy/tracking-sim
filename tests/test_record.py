@@ -60,3 +60,13 @@ def test_dict_round_trip() -> None:
     data["ts"] = data["ts"].isoformat()
     data["unexpected"] = "ignored"
     assert record == TruthRecord.from_dict(data)
+
+
+def test_category_is_normalised() -> None:
+    from datetime import UTC, datetime
+
+    from tracking_sim.truth import TruthRecord
+
+    r = TruthRecord("abc123", datetime(2026, 1, 1, tzinfo=UTC), None, None, "t", category=" a3 ")
+    assert r.category == "A3"
+    assert TruthRecord("abc123", r.ts, None, None, "t", category="  ").category is None

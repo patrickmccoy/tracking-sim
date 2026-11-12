@@ -131,3 +131,20 @@ def test_short_segments_and_empty_input() -> None:
     assert len(truth) == 0 and truth.stats.segments_too_short == 1
     assert truth.span is None
     assert len(build_truth([], frame)) == 0
+
+
+def test_segment_category_and_nacp_sigma() -> None:
+    frame = LocalFrame(40.0, -105.0, 1600.0)
+    records = [rec(s, alt_baro_ft=10_000.0, nacp=9) for s in range(0, 60, 5)]
+    records += [rec(1, lat=None, category="a3"), rec(2, lat=None, category="A3")]
+    records += [rec(3, lat=None, category="A5")]
+    (seg,) = build_truth(records, frame).segments
+    assert seg.category == "A3"
+    assert seg.horizontal_sigma_m == pytest.approx(30.0 / 2.45)  # NACp 9: EPU < 30 m
+    assert seg.metadata()["category"] == "A3"
+    off = build_truth(records, frame, TruthBuilderConfig(sigma_from_nacp=False))
+    assert off.segments[0].horizontal_sigma_m == 30.0
+    # NACp 0 means unknown: the default applies.
+    unknown = [rec(s, alt_baro_ft=10_000.0, nacp=0) for s in range(0, 60, 5)]
+    assert build_truth(unknown, frame).segments[0].horizontal_sigma_m == 30.0
+    assert build_truth(unknown, frame).segments[0].category is None
