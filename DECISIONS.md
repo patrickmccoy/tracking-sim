@@ -60,3 +60,24 @@ references in the YAML.
 Live mode polls the database for rows at least `live_delay_s` old instead of
 using `/flights/stream`, whose format has not been confirmed. Swap it in once
 it is.
+
+## D8. Truth smoothing: per-axis cubic smoothing splines chosen by GCV
+
+Each segment's ENU axes are fitted with `scipy.interpolate.make_smoothing_spline`,
+with the smoothing parameter picked by generalised cross-validation unless
+`smoothing_lam` is set. On the synthetic fixture this cuts the median
+horizontal error from about 9.4 m (raw positions, 8 m noise per axis) to about
+6.5 m and gives speeds within 0.5 m/s median, with no hand tuning per
+segment. Velocity is the spline derivative; reported ADS-B velocity is kept
+alongside for checking, not fused. A Kalman smoother that also uses the
+velocity reports is a possible later upgrade. `smoothing: linear` is
+available for debugging, and segments with fewer than five points always
+interpolate linearly. Trajectories never extrapolate past their segment.
+
+## D9. Outlier gate compares each point with both neighbours
+
+A point is dropped only when the steps to both neighbours exceed
+`max_speed_mps * dt + slack` while the neighbours agree with each other, so a
+single bad decode can't take its good neighbours with it. Two consecutive
+bad decodes that agree with each other survive. That is rare and is left
+for now.

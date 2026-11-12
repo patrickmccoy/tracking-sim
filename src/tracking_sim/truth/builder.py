@@ -9,8 +9,9 @@ Steps, in order:
 4. Merge the sparse position, altitude and velocity messages per segment.
 5. Convert to the local ENU frame of the scenario origin (SI units from here).
 
-Smoothing, ``state_at(t)`` and the Stone Soup export are in
-``tracking_sim.truth.trajectory``.
+6. Smooth each segment (``tracking_sim.truth.trajectory``) and expose
+   ``state_at(t)``, interpolating only, never extrapolating.
+7. Export Stone Soup ``GroundTruthPath`` objects for trackers and metrics.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -28,7 +29,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from tracking_sim.geo import LocalFrame, enu_velocity
 from tracking_sim.truth.record import TruthRecord
+from tracking_sim.truth.trajectory import Trajectory, TruthState, to_posix
 from tracking_sim.units import DEG_TO_RAD, FPM_TO_MPS, FT_TO_M, KT_TO_MPS
+
+if TYPE_CHECKING:
+    from stonesoup.types.groundtruth import GroundTruthPath
 
 __all__ = [
     "AltitudeReference",
@@ -123,6 +128,70 @@ class FlightSegment:
     reported_velocity: FloatArray
     on_ground: bool
     horizontal_sigma_m: float
+    smoothing: Literal["spline", "linear"] = "spline"
+    smoothing_lam: float | None = None
+    _trajectory: Trajectory | None = field(default=None, init=False, repr=False, compare=False)
+
+    @property
+    def trajectory(self) -> Trajectory:
+        """The smoothed fit, built on first use."""
+        if self._trajectory is None:
+            self._trajectory = Trajectory(
+                self.t, self.enu, method=self.smoothing, lam=self.smoothing_lam
+            )
+        return self._trajectory
+
+    def state_at(self, t: datetime | float) -> TruthState | None:
+        """Smoothed ENU state at ``t``, or ``None`` outside the segment."""
+        return self.trajectory.state_at(t)
+
+    def evaluate(self, t: Any) -> tuple[FloatArray, FloatArray, BoolArray]:
+        """Vectorised ``state_at``: positions, velocities and a validity mask."""
+        return self.trajectory.evaluate(t)
+
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "icao24": self.icao24,
+            "callsign": self.callsign,
+            "segment_id": self.segment_id,
+            "alt_reference": self.alt_reference,
+            "horizontal_sigma_m": self.horizontal_sigma_m,
+            "on_ground": self.on_ground,
+            "source_ids": self.source_ids,
+        }
+
+    def to_ground_truth_path(
+        self, times: Any = None, *, step_s: float | None = None
+    ) -> GroundTruthPath:
+        """Export as a Stone Soup ``GroundTruthPath``.
+
+        States are taken at ``times`` if given (points outside the segment are
+        skipped), every ``step_s`` seconds from the segment start if given,
+        and at the observation times otherwise. State vectors are
+        ``[x, vx, y, vy, z, vz]`` in the local ENU frame, and every state
+        carries the segment metadata.
+        """
+        from stonesoup.types.array import StateVector
+        from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
+
+        if times is not None:
+            tt = to_posix(times)
+        elif step_s is not None:
+            tt = np.arange(self.t[0], self.t[-1] + 1e-9, step_s)
+        else:
+            tt = self.t
+        pos, vel, valid = self.evaluate(tt)
+        meta = self.metadata()
+        states = [
+            GroundTruthState(
+                StateVector([p[0], v[0], p[1], v[1], p[2], v[2]]),
+                timestamp=datetime.fromtimestamp(float(ts), UTC),
+                metadata=dict(meta),
+            )
+            for ts, p, v, ok in zip(tt, pos, vel, valid, strict=True)
+            if ok
+        ]
+        return GroundTruthPath(states, id=self.segment_id)
 
     @property
     def start(self) -> datetime:
@@ -178,6 +247,24 @@ class TruthSet:
 
     def __iter__(self) -> Iterator[FlightSegment]:
         return iter(self.segments)
+
+    def active(self, t: datetime | float) -> list[FlightSegment]:
+        """Segments whose time span contains ``t``."""
+        ts = float(to_posix(t)[0])
+        return [s for s in self.segments if s.t[0] <= ts <= s.t[-1]]
+
+    def states_at(self, t: datetime | float) -> dict[str, TruthState]:
+        """Smoothed state of every segment active at ``t``, keyed by segment id."""
+        out: dict[str, TruthState] = {}
+        for seg in self.active(t):
+            state = seg.state_at(t)
+            if state is not None:
+                out[seg.segment_id] = state
+        return out
+
+    def ground_truth_paths(self, *, step_s: float | None = None) -> list[GroundTruthPath]:
+        """Every segment as a Stone Soup ``GroundTruthPath``."""
+        return [s.to_ground_truth_path(step_s=step_s) for s in self.segments]
 
 
 def gate_outliers(
@@ -407,6 +494,8 @@ def build_segments(
                 reported_velocity=_segment_velocity(track, t, config.velocity_merge_window_s),
                 on_ground=on_ground,
                 horizontal_sigma_m=config.default_horizontal_sigma_m,
+                smoothing=config.smoothing,
+                smoothing_lam=config.smoothing_lam,
             )
         )
     return segments
