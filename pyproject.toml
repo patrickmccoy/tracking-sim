@@ -24,7 +24,7 @@ tracking-sim = "tracking_sim.cli:main"
 
 [project.optional-dependencies]
 # Running and plotting from the notebooks.
-notebook = ["jupyterlab>=4.2", "matplotlib>=3.8", "nbclient>=0.10", "ipykernel>=6.29"]
+notebook = ["jupyterlab>=4.2", "matplotlib>=3.8", "pandas>=2.2", "nbclient>=0.10", "ipykernel>=6.29"]
 
 [dependency-groups]
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "types-pyyaml>=6.0"]

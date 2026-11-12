@@ -7,8 +7,22 @@ import pytest
 nbformat = pytest.importorskip("nbformat")
 nbclient = pytest.importorskip("nbclient")
 pytest.importorskip("matplotlib")
+pytest.importorskip("pandas")
 
 NOTEBOOKS = sorted((Path(__file__).resolve().parents[1] / "notebooks").glob("*.ipynb"))
+
+# What each notebook must print when it works.
+EXPECTED = {
+    "01_truth_playground.ipynb": (["AGREE"], ["DISAGREE"]),
+    "02_one_sensor.ipynb": (
+        ["configured 0.9: consistent", "identical = True", "same beam crossings: True"],
+        ["NOT consistent"],
+    ),
+}
+
+
+def test_every_notebook_has_expectations() -> None:
+    assert {p.name for p in NOTEBOOKS} == set(EXPECTED)
 
 
 @pytest.mark.notebook
@@ -20,6 +34,8 @@ def test_notebook_runs(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "TRACKING_SIM_WINDOW",
         "TRACKING_SIM_SECOND",
         "TRACKING_SIM_SBS_TZ",
+        "TRACKING_SIM_SENSOR",
+        "TRACKING_SIM_SEED",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("MPLBACKEND", "Agg")
@@ -31,4 +47,6 @@ def test_notebook_runs(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     outputs = [o for cell in nb.cells for o in cell.get("outputs", [])]
     assert not [o for o in outputs if o.get("output_type") == "error"]
     text = "".join(o.get("text", "") for o in outputs)
-    assert "AGREE" in text and "DISAGREE" not in text
+    present, absent = EXPECTED[path.name]
+    assert all(s in text for s in present), [s for s in present if s not in text]
+    assert not any(s in text for s in absent)
