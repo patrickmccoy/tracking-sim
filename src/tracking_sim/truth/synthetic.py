@@ -45,6 +45,11 @@ class ReceiverConfig:
     TruthRecord altitude field the receiver fills, so a receiver can imitate a
     source whose altitude reference is unknown.
 
+    ``altitude_kind`` (``"baro"`` or ``"geom"``) says what the value in
+    ``altitude_field`` really is; by default it is geometric only when the
+    field is ``alt_geom_ft``. ``report_geom`` also fills ``alt_geom_ft`` with
+    geometric height, as ``aircraft.json`` does.
+
     With ``duplicate_of`` set to another receiver's ``source_id``, this
     receiver re-hears that receiver's messages: same decoded values, a later
     timestamp, and only a ``hear_probability`` fraction of them. That is what
@@ -58,6 +63,8 @@ class ReceiverConfig:
     altitude_field: str = "alt_baro_ft"
     outlier_count: int = 0
     duplicate_of: str | None = None
+    altitude_kind: str | None = None
+    report_geom: bool = False
 
 
 @dataclass
@@ -395,7 +402,10 @@ def _hear(
         lat = pos["lat"] + np.degrees(noise[1] / _EARTH_RADIUS_M)
         lon = pos["lon"] + np.degrees(noise[0] / (_EARTH_RADIUS_M * np.cos(np.radians(pos["lat"]))))
         geom_ft = pos["alt_m"] / FT
-        alt_ft = geom_ft if receiver.altitude_field == "alt_geom_ft" else geom_ft - baro_offset_ft
+        kind = receiver.altitude_kind or (
+            "geom" if receiver.altitude_field == "alt_geom_ft" else "baro"
+        )
+        alt_ft = geom_ft if kind == "geom" else geom_ft - baro_offset_ft
         alt_ft = np.round(alt_ft / 25.0) * 25.0
 
         for k, ts in enumerate(pos_t):
@@ -409,6 +419,8 @@ def _hear(
             )
             if not flight.on_ground:
                 altitude: dict[str, Any] = {receiver.altitude_field: float(alt_ft[k])}
+                if receiver.report_geom:
+                    altitude["alt_geom_ft"] = float(np.round(geom_ft[k] / 25.0) * 25.0)
                 record = replace(record, **altitude)
             records.append(record)
         vel = flight.sample(vel_t)

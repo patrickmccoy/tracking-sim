@@ -26,7 +26,8 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
-from tracking_sim.truth.record import ensure_utc
+from tracking_sim.geo import LocalFrame
+from tracking_sim.truth.record import TruthRecord, ensure_utc
 from tracking_sim.truth.recorder import export_replay, record_stream, summarize
 from tracking_sim.truth.source import TruthSource
 from tracking_sim.truth.sources.recording import RecordingWriter, read_records
@@ -129,6 +130,42 @@ def _cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_origin(value: str | None, records: list[TruthRecord]) -> LocalFrame:
+    if value:
+        parts = [float(x) for x in value.split(",")]
+        if len(parts) not in (2, 3):
+            raise SystemExit("--origin takes LAT,LON or LAT,LON,ALT_M")
+        return LocalFrame(*parts)
+    lats = [r.lat for r in records if r.lat is not None]
+    lons = [r.lon for r in records if r.lon is not None]
+    if not lats:
+        raise SystemExit("compare: no positions in the reference recording")
+    return LocalFrame(sum(lats) / len(lats), sum(lons) / len(lons))
+
+
+def _cmd_compare(args: argparse.Namespace) -> int:
+    from tracking_sim.truth.builder import TruthBuilderConfig, build_truth
+    from tracking_sim.truth.compare import assess_altitude_reference, compare_truth
+
+    start = parse_time(args.start) if args.start else None
+    end = parse_time(args.end) if args.end else None
+    candidate = read_records(args.candidate, start, end)
+    reference = read_records(args.reference, start, end)
+    frame = _parse_origin(args.origin, reference)
+    config = TruthBuilderConfig(default_horizontal_sigma_m=args.sigma)
+    report = compare_truth(
+        build_truth(candidate, frame, config),
+        build_truth(reference, frame, config),
+        step_s=args.step,
+    )
+    print(f"a = {args.candidate}\nb = {args.reference}\n")
+    print(report.table())
+    if args.altitude:
+        print("\naltitude reference of a:")
+        print(assess_altitude_reference(candidate, reference, frame, config=config).summary())
+    return 0 if report.agrees else 1
+
+
 def _cmd_info(args: argparse.Namespace) -> int:
     start = parse_time(args.start) if args.start else None
     end = parse_time(args.end) if args.end else None
@@ -180,6 +217,28 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--end", help="ISO 8601 end time (exclusive, default: open)")
         _add_output_options(sub)
         sub.set_defaults(func=_cmd_export)
+
+    compare = commands.add_parser(
+        "compare",
+        help="check two recordings agree on the same aircraft (and test altitude reference)",
+    )
+    compare.add_argument("candidate", help="recording under test, e.g. a planespotter export")
+    compare.add_argument("reference", help="reference recording, e.g. from record sbs")
+    compare.add_argument(
+        "--origin", help="LAT,LON[,ALT_M] of the local frame (default: reference centroid)"
+    )
+    compare.add_argument("--start", help="ISO 8601 start time (inclusive)")
+    compare.add_argument("--end", help="ISO 8601 end time (exclusive)")
+    compare.add_argument("--step", type=float, default=5.0, help="sample spacing, seconds")
+    compare.add_argument(
+        "--sigma", type=float, default=30.0, help="horizontal truth sigma, metres (default 30)"
+    )
+    compare.add_argument(
+        "--altitude",
+        action="store_true",
+        help="also test whether the candidate's altitude is barometric or geometric",
+    )
+    compare.set_defaults(func=_cmd_compare)
 
     info = commands.add_parser("info", help="summarize recording files")
     info.add_argument("paths", nargs="+", help="recording files, directories or globs")

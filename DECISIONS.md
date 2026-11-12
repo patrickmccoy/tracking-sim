@@ -81,3 +81,33 @@ A point is dropped only when the steps to both neighbours exceed
 single bad decode can't take its good neighbours with it. Two consecutive
 bad decodes that agree with each other survive. That is rare and is left
 for now.
+
+## D10. Settling the planespotter altitude reference: tooling now, verdict pending
+
+The design asks milestone 1 to resolve whether planespotter's stored
+altitude is barometric or geometric. That needs either the decoder code path
+planespotter reads, or the database next to a live receiver, and neither
+was available in the session that built milestone 1. What exists instead:
+
+* `tracking_sim.truth.compare.assess_altitude_reference` compares a
+  candidate source's altitude with a reference receiver's barometric and
+  geometric altitude for the same aircraft and times, and returns `baro`,
+  `geom` or `inconclusive` with the numbers behind it.
+* `tracking-sim compare CANDIDATE REFERENCE --altitude` runs it on two
+  recordings.
+
+Procedure, about an hour of wall time:
+
+1. Record a reference from the same receiver planespotter uses:
+   `tracking-sim record sbs --host <receiver> --tz <zone> -o data/ref.parquet --duration 3600`.
+   SBS only gives barometric altitude. Once the `aircraft_json` adapter
+   exists (milestone 4), record that instead to get geometric altitude too.
+2. Export the same hour from planespotter:
+   `tracking-sim export planespotter --config <cfg> --start ... --end ... -o data/ps.parquet`.
+3. `tracking-sim compare data/ps.parquet data/ref.parquet --altitude`.
+
+A `baro` verdict with only an SBS reference is strong evidence but not
+proof: on a day near standard pressure, geometric and barometric altitude
+can be within the tolerance. Pick a day when the local altimeter setting is
+well away from 29.92 inHg, or repeat with `aircraft.json`. When settled, set
+`altitude_reference` in the planespotter config and record the result here.
