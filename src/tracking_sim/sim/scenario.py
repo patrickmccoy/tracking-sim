@@ -14,7 +14,8 @@ A minimal subset of the design's scenario format, enough for milestone 3's
     trackers: [trackers/ekf-cv-gnn.yaml, trackers/ukf-cv-gnn.yaml]
     seed: 42
 
-Paths are relative to the scenario file. Without ``origin`` the scenario
+Sensors and trackers are spec files or specs written inline (a mapping in
+place of the path). Paths are relative to the scenario file. Without ``origin`` the scenario
 frame is centred on the first sensor's site.
 
 ``run_scenario`` builds truth, simulates the sensors once, runs every
@@ -38,10 +39,10 @@ from tracking_sim.config import load_yaml
 from tracking_sim.eval.metrics import MetricSettings, TrackerScore, comparison_table, score_run
 from tracking_sim.eval.scoring import ScoringGrid, scoring_grid, segment_of
 from tracking_sim.geo import LocalFrame
-from tracking_sim.sensors.spec import RotatingRadar2DSpec, load_sensor_spec
+from tracking_sim.sensors.spec import RotatingRadar2DSpec, load_sensor_spec, parse_sensor_spec
 from tracking_sim.sim.engine import ReplayEngine, SimulationResult
 from tracking_sim.tracking.runner import TrackerRun, detection_batches, run_tracker
-from tracking_sim.tracking.spec import TrackerSpec, load_tracker_spec
+from tracking_sim.tracking.spec import TrackerSpec, load_tracker_spec, parse_tracker_spec
 from tracking_sim.truth.builder import TruthBuilderConfig, TruthSet, build_truth
 from tracking_sim.truth.record import ensure_utc
 
@@ -85,8 +86,12 @@ class ScenarioSpec(_Spec):
     name: str = Field(min_length=1)
     origin: OriginSpec | None = None
     truth: TruthSpec
-    sensors: list[str] = Field(min_length=1)
-    trackers: list[str] = Field(min_length=1)
+    sensors: list[str | dict[str, Any]] = Field(
+        min_length=1, description="spec files, or specs written inline"
+    )
+    trackers: list[str | dict[str, Any]] = Field(
+        min_length=1, description="spec files, or specs written inline"
+    )
     seed: int = Field(0, ge=0)
     metrics: MetricsSpec = Field(default_factory=MetricsSpec)
 
@@ -143,8 +148,14 @@ def load_scenario(path: str | Path) -> Scenario:
     path = Path(path)
     spec = ScenarioSpec.model_validate(load_yaml(path) or {})
     base = path.parent
-    sensors = [load_sensor_spec(base / p) for p in spec.sensors]
-    trackers = [load_tracker_spec(base / p) for p in spec.trackers]
+    sensors = [
+        load_sensor_spec(base / item) if isinstance(item, str) else parse_sensor_spec(item)
+        for item in spec.sensors
+    ]
+    trackers = [
+        load_tracker_spec(base / item) if isinstance(item, str) else parse_tracker_spec(item)
+        for item in spec.trackers
+    ]
     for kind, ids in (("sensor", [s.id for s in sensors]), ("tracker", [t.id for t in trackers])):
         if len(set(ids)) != len(ids):
             raise ValueError(f"{kind} ids must be unique: {ids}")
