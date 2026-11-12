@@ -211,3 +211,47 @@ def test_unresolved_targets_merge_into_one_detection() -> None:
     no_merge = radar(detection={"pd": 1.0}, resolution={"range_m": 0, "bearing_deg": 0})
     result = no_merge.observe(0, items, sensor_streams(1, "radar-1"), paths)
     assert len(result.true_detections) == 6
+
+
+def test_false_alarms_are_poisson_and_uniform_over_the_coverage_area() -> None:
+    r = radar(
+        coverage={"range_min_m": 1_000, "range_max_m": 50_000, "azimuth_deg": [300, 60]},
+        detection={"pd": 0.9, "false_alarm_density": 1e-8},
+    )
+    # A 120-degree sector of the annulus: about 26 false alarms a scan.
+    assert r.coverage_area_m2 == pytest.approx(np.pi / 3 * (50_000**2 - 1_000**2))
+    streams = sensor_streams(3, r.sensor_id)
+    counts, ranges, azimuths = [], [], []
+    for scan in range(400):
+        result = r.observe(scan, [], streams, {})
+        clutter = result.clutter
+        counts.append(len(clutter))
+        start, end = r.scan_window(scan)
+        for d in clutter:
+            assert start <= d.timestamp < end
+            assert d.metadata["kind"] == "clutter" and d.metadata["scan"] == scan
+            az = float(bearing_to_compass(float(d.state_vector[0, 0])))
+            beam = float(r.beam.azimuth_at(d.timestamp.timestamp()))
+            assert abs((az - beam + np.pi) % (2 * np.pi) - np.pi) < 1e-5
+            azimuths.append(np.degrees(az))
+            ranges.append(float(d.state_vector[1, 0]))
+        assert [d.timestamp for d in result.detections] == sorted(
+            d.timestamp for d in result.detections
+        )
+    lam = r.expected_false_alarms
+    assert np.mean(counts) == pytest.approx(lam, abs=4 * np.sqrt(lam / 400))
+    assert np.var(counts) == pytest.approx(lam, rel=0.25)  # Poisson: variance = mean
+    az = np.array(azimuths)
+    assert np.all((az >= 300) | (az <= 60))
+    r2 = np.array(ranges) ** 2
+    assert np.all((r2 >= 1_000**2) & (r2 <= 50_000**2))
+    # Uniform over area: range squared is uniform, so its mean is the midpoint.
+    mid = (1_000**2 + 50_000**2) / 2
+    assert r2.mean() == pytest.approx(mid, rel=0.02)
+
+
+def test_no_false_alarms_by_default(truth: TruthSet, paths: dict[str, GroundTruthPath]) -> None:
+    r = radar()
+    crossings, _ = r.crossings(truth, START, END)
+    result = r.observe(0, [c for c in crossings if c.scan == 0], sensor_streams(1, "x"), paths)
+    assert result.clutter == [] and r.expected_false_alarms == 0

@@ -9,9 +9,11 @@ Per scan, for each aircraft, the radar:
 3. draws a detection with probability Pd;
 4. adds Gaussian noise to slant range and bearing;
 5. merges detected targets closer together than the resolution cell;
+6. adds false alarms across the coverage area;
 
-and emits Stone Soup ``TrueDetection`` objects carrying the slant-range
-measurement model and a link to the truth path. Every crossing, detected or
+and emits Stone Soup ``TrueDetection`` objects (and ``Clutter`` for false
+alarms) carrying the slant-range measurement model and, for targets, a link
+to the truth path. Every crossing, detected or
 not, is kept as an *opportunity* so achieved Pd can be measured against the
 configured value.
 
@@ -264,7 +266,8 @@ class RotatingRadar2D:
         ``crossings`` must be this scan's, in time order. Pd and noise are
         drawn for every opportunity, detected or not, so the noise on one
         target does not depend on whether another was detected. Detected
-        targets the radar cannot resolve then merge into one detection.
+        targets the radar cannot resolve then merge into one detection, and
+        false alarms are added. Detections come back in time order.
         """
         start, end = self.scan_window(scan)
         opportunities = [c for c in crossings if c.in_coverage]
@@ -278,6 +281,8 @@ class RotatingRadar2D:
             detections.append(
                 self._true_detection([opportunities[i] for i in members], noise[members], paths)
             )
+        detections.extend(self._false_alarms(scan, streams.clutter))
+        detections.sort(key=lambda d: d.timestamp)
         detected_ids = {(opportunities[i].segment_id, opportunities[i].t) for i in hit_index}
         detected = [(c.segment_id, c.t) in detected_ids for c in crossings]
         return ScanResult(
@@ -289,6 +294,44 @@ class RotatingRadar2D:
             detected=detected,
             detections=detections,
         )
+
+    @property
+    def coverage_area_m2(self) -> float:
+        """Area of the coverage annulus (or sector of it), in square metres."""
+        cov = self.spec.coverage
+        sector = np.radians(cov.sector_width_deg)
+        return float(0.5 * sector * (cov.range_max_m**2 - cov.range_min_m**2))
+
+    @property
+    def expected_false_alarms(self) -> float:
+        """Mean number of false alarms per scan."""
+        return self.spec.detection.false_alarm_density * self.coverage_area_m2
+
+    def _false_alarms(self, scan: int, rng: np.random.Generator) -> list[Detection]:
+        """Poisson-many false alarms, uniform over the coverage area.
+
+        Uniform over area means uniform in azimuth and in range squared, so
+        false alarms thin out towards the centre the way a PPI shows them.
+        Each is timestamped when the beam points at its azimuth.
+        """
+        cov = self.spec.coverage
+        count = int(rng.poisson(self.expected_false_alarms))
+        if count == 0:
+            return []
+        az = np.radians(cov.azimuth_deg[0] + cov.sector_width_deg * rng.random(count))
+        az = np.mod(az, 2 * np.pi)
+        slant = np.sqrt(rng.uniform(cov.range_min_m**2, cov.range_max_m**2, count))
+        times = self.beam.time_at_azimuth(scan, az)
+        bearings = compass_to_bearing(az)
+        return [
+            Clutter(
+                state_vector=StateVector([Bearing(float(b)), float(r)]),
+                timestamp=datetime.fromtimestamp(float(t), UTC),
+                measurement_model=self.measurement_model,
+                metadata=self._metadata(scan, float(t), "clutter"),
+            )
+            for b, r, t in zip(bearings, slant, times, strict=True)
+        ]
 
     def _resolve(self, targets: Sequence[Crossing]) -> list[list[int]]:
         """Group targets closer than the resolution cell in both range and bearing.
