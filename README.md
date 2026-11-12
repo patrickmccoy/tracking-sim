@@ -4,7 +4,7 @@ Sensor and tracking simulation playground: replay real ADS-B traffic from Dump10
 
 You define a sensor (range, accuracy, scan rate, detection probability), place it on the map, and replay traffic past it. The output is detections, tracks, and scores against truth, so different filters can be compared on identical traffic.
 
-> **Status: milestones 1 to 3 are implemented.** Truth ingestion, cleaning and export to Stone Soup work; a simulated rotating 2D radar turns an hour of traffic into realistic detections (noise, slant range, misses, unresolved targets, clutter) from a seed; and three Stone Soup trackers (EKF, UKF, multiple-model particle filter) run on those detections and are scored with OSPA, GOSPA and SIAP in one command. Scenarios with terrain and more sensor types come in milestone 4. See [PROGRESS.md](PROGRESS.md) for exactly what is done and what is next.
+> **Status: milestones 1 to 4 are implemented.** Truth comes from Dump1090 SBS or readsb/dump1090-fa `aircraft.json`; a simulated rotating 2D radar turns an hour of traffic into realistic detections (noise, slant range, radar-equation Pd by aircraft size, unresolved targets, clutter, terrain masking from real elevation data); a passive bearing-only sensor runs alongside; three Stone Soup trackers (EKF, UKF, multiple-model particle filter) are scored with OSPA, GOSPA and SIAP; and every run is stored once in an immutable run store. The map UI comes in milestone 5. See [PROGRESS.md](PROGRESS.md) for exactly what is done and what is next.
 
 - [How it works](#how-it-works)
 - [Getting started](#getting-started)
@@ -28,15 +28,15 @@ Truth enters only through the outputs of a Dump1090-family decoder, so the frame
  │               │                 │ ENU, state_at │ ─────────┐        │ 2D radar     │             │  Soup)   │         │ map            │
  └───────────────┘                 └───────────────┘          │        └──────────────┘             └──────────┘         └────────────────┘
                                                               └────────────── truth for scoring ──────────────────────────────────▲
-       built                             built                              built                      built           metrics built;
-                                                                                                                       runs, UI: 4-5
+       built                             built                              built                      built           metrics, runs
+                                                                                                                       built; UI: 5
 ```
 
 1. **Truth sources** emit canonical `TruthRecord`s. Every source implements the same `TruthSource` protocol (`replay(start, end)` and `stream()`), so a live Dump1090 feed, a captured SBS file and a recording are interchangeable.
 2. **The truth builder** turns sparse records into clean per-flight segments that can be sampled at any time.
 3. **The sensor simulator** samples those paths when each sensor's beam crosses each aircraft and emits noisy detections, misses and false alarms as Stone Soup `Detection`s.
 4. **Trackers** are Stone Soup pipelines assembled from YAML specs, all fed the same detections.
-5. **Scoring** compares tracks with the truth the sensors could see (OSPA, GOSPA, SIAP, track latency). *Storing runs and the map UI come in milestones 4 and 5.*
+5. **Scoring** compares tracks with the truth the sensors could see (OSPA, GOSPA, SIAP, track latency), and every run is kept in an immutable run store. *The map UI comes in milestone 5.*
 
 ### Truth sources
 
@@ -44,7 +44,8 @@ Truth enters only through the outputs of a Dump1090-family decoder, so the frame
 | --- | --- | --- | --- |
 | `sbs` | Dump1090 SBS-1 BaseStation text (TCP port 30003) or captured files (plain or `.gz`) | live, replay | Position, barometric altitude, speed, track, vertical rate, callsign. |
 | `recording` | Parquet or JSONL files of TruthRecords | replay | A parsed SBS feed saved for fast, repeatable replay. `tracking-sim record` writes it. |
-| `aircraft_json`, `beast` | readsb / dump1090-fa `aircraft.json`, Beast frames | | Milestones 4 and 6: geometric altitude, NIC/NACp, raw per-message timestamps. |
+| `aircraft_json` | readsb / dump1090-fa `aircraft.json`, polled over HTTP or saved snapshots (`.json`, `.jsonl`, `.gz`) | live, replay | Adds geometric altitude, NIC/NACp and the ADS-B emitter category. |
+| `beast` | Beast frames | | Milestone 6: raw Mode S with per-message timestamps. |
 
 `TruthRecord` keeps the source's native units (feet, knots, degrees). Position and velocity usually arrive as separate messages, so everything except `icao24`, `ts`, `source_id` and (for position messages) `lat`/`lon` is optional. Timestamps are always timezone-aware UTC.
 
@@ -64,7 +65,7 @@ Truth enters only through the outputs of a Dump1090-family decoder, so the frame
 
 ADS-B is good truth horizontally and weaker vertically, and the design treats both limits explicitly:
 
-- SBS carries no accuracy fields, so truth gets a configurable horizontal sigma, 30 m by default.
+- SBS carries no accuracy fields, so truth gets a configurable horizontal sigma, 30 m by default. With `aircraft.json`, each segment's sigma comes from its NACp instead (NACp 9: about 12 m).
 - Barometric altitude can differ from true height by hundreds of feet depending on weather, so every segment records which altitude reference it uses.
 - A live SBS feed carries barometric altitude. An exported SBS file carries whatever its source stored, so until that is known, read it with `--altitude-field alt_unknown_ft`. `tracking-sim compare --altitude` is the tool for settling it; see [DECISIONS.md](DECISIONS.md) (D10).
 
@@ -94,6 +95,22 @@ latency_s: 0.5
 6. **Adds false alarms**, a Poisson number per scan spread uniformly over the coverage area.
 
 Detections are Stone Soup `TrueDetection` (linked to the truth path) and `Clutter` objects with `[bearing, slant range]` measurements and a matching measurement model (`CartesianToBearingSlantRange`), so Stone Soup trackers can use them directly. Every beam crossing is also kept as a detection *opportunity*, so achieved Pd can be checked against the configured value. All randomness comes from the run seed, with separate streams per sensor and per purpose: the same seed reproduces a run exactly, adding a sensor doesn't change the others, and changing the clutter density doesn't change which aircraft are detected.
+
+### Realism: terrain, radar physics and a second sensor
+
+- **Terrain masking.** With a terrain model, every sensor also checks line of sight over the ground (on a 4/3 earth) and gates hidden aircraft as `terrain`. Real terrain comes from Copernicus GLO-90 (or GLO-30) elevation tiles, free and global, downloaded once and cached under `~/.cache/tracking-sim` (needs `uv sync --extra terrain`); a synthetic ridge or flat ground work offline.
+- **Radar-equation Pd.** `detection.model: radar_equation` replaces a fixed Pd: you give the SNR a 1 m² target has at a reference range, and Pd follows from the radar equation (SNR falls as range⁴) for the aircraft's radar cross-section class, with a Swerling 1 (fluctuating) or 0 (steady) target. The class (light, small, large, heavy, rotorcraft) comes from an optional `icao24,class` CSV, then the ADS-B emitter category, then a default.
+- **Passive bearing-only sensor.** `type: passive_bearing` is a staring receiver: every update (1 s by default) it reports a noisy bearing to each aircraft it hears, with Pd from a one-way link (SNR falls as range²) and some false bearings. Trackers can't use bearing-only detections yet (fusion is milestone 6), so scenarios feed trackers radar detections only.
+
+```yaml
+detection:
+  model: radar_equation
+  reference_snr_db: 13          # a 1 m^2 target at 50 km gives 13 dB
+  reference_range_m: 50000
+  pfa: 1.0e-6
+  swerling: 1
+  rcs_m2: {light: 1, small: 2, large: 20, heavy: 60, rotorcraft: 3, unknown: 5}
+```
 
 ### Trackers and scoring
 
@@ -125,7 +142,7 @@ Scoring puts truth and tracks on a common grid (every scan end) and counts an ai
 A **scenario** file ties a run together (truth, sensors, trackers, seed), and `tracking-sim run` runs it:
 
 ```sh
-uv run tracking-sim run scenarios/kbjc-synthetic.yaml --out runs/kbjc
+uv run tracking-sim run scenarios/kbjc-synthetic.yaml
 ```
 
 ```
@@ -135,7 +152,17 @@ ukf-cv-gnn   16.0      59     470   1653  1163     232    258      0.87   1.00  
 pf-mm-gnn    23.7      56     542   1854  1255     320    278      0.82   1.00      0.16        415     0.67         15      1
 ```
 
-`--out` writes the resolved configuration, detections, every tracker's tracks (Parquet), `metrics.json` (summary and per-scan OSPA/GOSPA) and the table.
+Each run is stored once in the **run store**, `runs/<name>-<hash>/`: the resolved configuration, a manifest, detections, every tracker's tracks (Parquet), `metrics.json` (summary and per-scan OSPA/GOSPA) and the table, all read-only. The hash covers the resolved scenario, the input data (truth, terrain, aircraft classes), the seed and the code (a digest of the package source and the Stone Soup, NumPy and SciPy versions), so running an identical scenario again reuses the stored run, and any change makes a new one. `tracking-sim runs list`, `runs show ID` and `runs compare A B` browse them; `--out DIR` writes a plain directory outside the store instead.
+
+A scenario can also carry terrain, inline sensor and tracker specs, and an aircraft-class table; [scenarios/kbjc-terrain.yaml](scenarios/kbjc-terrain.yaml) uses all of them:
+
+```yaml
+terrain: {source: copernicus, resolution_m: 90}     # or synthetic (a ridge) or flat
+truth: {path: ..., aircraft_classes: classes.csv}   # optional icao24,class table
+sensors:
+  - sensors/radar-1.yaml                             # a file...
+  - {id: esm-1, type: passive_bearing, ...}          # ...or a spec written inline
+```
 
 ### Package layout
 
@@ -146,12 +173,15 @@ src/tracking_sim/
   units.py               # unit constants (SI internally)
   geo/frames.py          # LocalFrame: WGS84 <-> ENU
   geo/site.py            # SensorSite (a sensor's own frame), 4/3-earth radar horizon
+  geo/terrain.py         # elevation models, per-sensor terrain horizon
+  geo/copernicus.py      # Copernicus DEM tiles: download, cache, mosaic
   truth/
     record.py            # TruthRecord
     source.py            # TruthSource protocol
     sources/
       recording.py       # Parquet / JSONL reader and writer
       sbs.py             # Dump1090 SBS-1 BaseStation
+      aircraft_json.py   # readsb / dump1090-fa aircraft.json
     builder.py           # dedupe, segment, gate, merge, ENU -> TruthSet
     trajectory.py        # smoothing splines, state_at(t)
     compare.py           # source agreement and altitude reference checks
@@ -159,9 +189,12 @@ src/tracking_sim/
     synthetic.py         # seeded synthetic traffic for tests and demos
   sensors/
     spec.py              # SensorSpec: Pydantic models loaded from YAML
+    base.py              # GroundSensor: site, geometry gates (range ... terrain), opportunities
     scan.py              # BeamSchedule: when a rotating beam crosses each target
-    measurement.py       # CartesianToBearingSlantRange (Stone Soup measurement model)
-    radar.py             # RotatingRadar2D: gates, Pd, noise, resolution, clutter
+    measurement.py       # slant-range and bearing-only Stone Soup measurement models
+    detection.py         # RCS classes, radar equation, Swerling Pd
+    radar.py             # RotatingRadar2D: Pd, noise, resolution, clutter
+    passive.py           # PassiveBearingSensor: staring, bearing only
   sim/
     rng.py               # per-sensor, per-purpose random streams from the run seed
     engine.py            # ReplayEngine and SimulationResult (stats, tables, Parquet)
@@ -176,8 +209,9 @@ src/tracking_sim/
   eval/
     scoring.py           # truth and tracks on a common grid, coverage-only truth
     metrics.py           # OSPA, GOSPA, SIAP, latency, comparison table
-notebooks/               # 01_truth_playground, 02_one_sensor, 03_tracking
-scenarios/               # kbjc-synthetic.yaml; sensors/ and trackers/ specs
+    runstore.py          # the immutable run store
+notebooks/               # 01_truth_playground, 02_one_sensor, 03_tracking, 04_scenarios_and_terrain
+scenarios/               # kbjc-synthetic.yaml, kbjc-terrain.yaml; sensors/ and trackers/ specs
 tools/README.md          # the SBS contract for exporters from other systems
 scripts/make_fixture.py  # regenerates tests/data
 tests/                   # pytest suite; tests/data holds the synthetic fixture
@@ -205,10 +239,10 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 ```sh
 git clone https://github.com/patrickmccoy/tracking-sim.git
 cd tracking-sim
-uv sync --extra notebook
+uv sync --extra notebook --extra terrain
 ```
 
-This creates `.venv/` with the package, its pinned dependencies (from `uv.lock`), Jupyter, matplotlib and pandas.
+This creates `.venv/` with the package, its pinned dependencies (from `uv.lock`), Jupyter, matplotlib and pandas, and the GeoTIFF readers for terrain tiles. (`--extra terrain` is optional: without it, notebook 04 uses a synthetic ridge.)
 
 **3. Open the notebooks:**
 
@@ -255,6 +289,17 @@ It runs `scenarios/kbjc-synthetic.yaml` (about a minute) and compares the three 
 
 Edit a tracker spec in `scenarios/trackers/` (motion noise, gate, particle count, initiation) and re-run to see the effect on identical traffic.
 
+#### Notebook 04: scenarios and terrain
+
+It downloads (once, about 57 MB) real terrain for the Front Range, or uses a synthetic ridge offline, and shows:
+
+1. The terrain, radar A at KBJC and radar B 15 km west, behind the first foothills ridge.
+2. Coverage maps: the lowest height an aircraft can fly and still be seen, all round each radar.
+3. The same radar, traffic and seed at A and at B: from B, low traffic to the east disappears (on real terrain, 63 low-altitude detections on bearings 45–135° instead of 356).
+4. Radar-equation Pd by range and aircraft size class, against the model.
+5. The passive sensor's bearings over time.
+6. The run store reusing an identical run and storing a new one for another seed.
+
 If you prefer VS Code or another editor, open the notebook there and choose the `.venv` interpreter in the repo as the kernel.
 
 **4. Check everything works** (optional):
@@ -287,6 +332,14 @@ uv run tracking-sim export sbs capture.sbs --tz America/Denver -o data/capture.p
 ```
 
 You can also skip the conversion: the notebook reads `.sbs` and `.sbs.gz` files directly.
+
+If your decoder is readsb or dump1090-fa, `aircraft.json` gives more than SBS (geometric altitude, position accuracy, aircraft category):
+
+```sh
+uv run tracking-sim record aircraft-json --url http://192.168.1.50/data/aircraft.json \
+    --receiver roof -o data/2026-11-01.parquet --duration 3600
+uv run tracking-sim export aircraft-json snapshots/ -o data/snapshots.parquet   # saved polls
+```
 
 Check what you recorded:
 
@@ -326,11 +379,16 @@ uv run tracking-sim compare data/export.parquet data/2026-11-01.parquet --altitu
 ## Command line
 
 ```
-tracking-sim record sbs    record a live Dump1090 feed into a recording file
-tracking-sim export sbs    convert captured SBS text files into a recording
-tracking-sim compare A B   check two recordings agree on the same aircraft (--altitude too)
-tracking-sim info FILES    summarize recordings
-tracking-sim run SCENARIO  simulate a scenario's sensors, run and score its trackers (--out DIR, --seed N)
+tracking-sim record sbs            record a live Dump1090 SBS feed into a recording file
+tracking-sim record aircraft-json  poll readsb / dump1090-fa aircraft.json into a recording
+tracking-sim export sbs            convert captured SBS text files into a recording
+tracking-sim export aircraft-json  convert saved aircraft.json snapshots into a recording
+tracking-sim compare A B           check two recordings agree on the same aircraft (--altitude too)
+tracking-sim info FILES            summarize recordings
+tracking-sim run SCENARIO          run a scenario into the run store (--seed N, --runs DIR, --out DIR)
+tracking-sim runs list             stored runs
+tracking-sim runs show ID          one run's manifest and results (ids or unique prefixes)
+tracking-sim runs compare A B      configuration and metric differences between two runs
 ```
 
 Run `uv run tracking-sim <command> --help` for every option. `compare` exits non-zero when the sources disagree, so it can be scripted.
@@ -427,6 +485,10 @@ Nothing site-specific lives in code. Hosts, ports, credentials and locations com
 | `TRACKING_SIM_SENSOR` | notebook 02 | Sensor spec YAML (default `scenarios/sensors/radar-1.yaml`) |
 | `TRACKING_SIM_SEED` | notebooks 02, 03 | Run seed (notebook 02 default 42; notebook 03 overrides the scenario's) |
 | `TRACKING_SIM_SCENARIO` | notebook 03 | Scenario YAML (default `scenarios/kbjc-synthetic.yaml`) |
+| `TRACKING_SIM_TERRAIN` | notebook 04 | `copernicus` (default) or `synthetic` |
+| `TRACKING_SIM_AIRCRAFT_JSON` | `record aircraft-json` | URL of `aircraft.json` |
+| `TRACKING_SIM_RUNS` | `run`, `runs` | Run store directory (default `runs`) |
+| `TRACKING_SIM_CACHE` | terrain | Download cache (default `~/.cache/tracking-sim`) |
 
 Sensors, trackers and scenarios are YAML files (above; every field is validated, `${VAR}` references are expanded, and scenario paths are relative to the scenario file). Truth builder settings live in `TruthBuilderConfig` (a Pydantic model): segment gap, speed gate, default truth sigma, altitude preference, smoothing method, and whether to drop aircraft on the ground.
 
@@ -459,7 +521,7 @@ Conventions, from the design document:
 | 1. Truth | SBS ingest, exporter contract, truth builder, Stone Soup ground truth, notebook. **Implemented** (altitude verdict pending real data). |
 | 2. One sensor | `SensorSpec` YAML, rotating 2D radar with beam-crossing timing, slant-range and bearing noise, Pd, resolution, false alarms and radar horizon; seeded replay engine; notebook. **Implemented.** |
 | 3. Tracking and metrics | Tracker specs and factory (EKF + GNN baseline, UKF, multiple-model particle filter); OSPA, GOSPA, SIAP and latency; `tracking-sim run` comparison table; notebook. **Implemented.** |
-| 4. Scenarios and realism | Scenario files and an immutable run store, terrain masking, radar-equation Pd, `aircraft_json` adapter, passive bearing-only sensor. |
+| 4. Scenarios and realism | Scenario files and an immutable run store, terrain masking from Copernicus DEM tiles, radar-equation Pd with RCS classes, `aircraft_json` adapter, passive bearing-only sensor; notebook. **Implemented.** |
 | 5. Map playground | FastAPI service and a MapLibre map UI to place sensors and replay runs. |
 | 6. Live and multi-sensor | Live engine, `beast` adapter, multi-sensor fusion. |
 

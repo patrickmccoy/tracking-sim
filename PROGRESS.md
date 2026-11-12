@@ -248,14 +248,43 @@ chance to score heights.
 
 Status:
 
-- [ ] Scenario files and the immutable run store
-- [ ] Terrain masking from a DEM
-- [ ] Radar equation Pd with RCS classes
-- [ ] `aircraft_json` adapter, bringing geometric altitude and NACp
-- [ ] A second sensor type (passive bearing-only)
+- [x] Scenario files and the immutable run store
+- [x] Terrain masking from a DEM (Copernicus GLO-90 by default)
+- [x] Radar equation Pd with RCS classes
+- [x] `aircraft_json` adapter, bringing geometric altitude and NACp
+- [x] A second sensor type (passive bearing-only)
 
-Done when moving a radar behind a ridge visibly removes low-altitude
-detections on that bearing.
+Done-when check: `notebooks/04_scenarios_and_terrain.ipynb` runs the same
+radar, traffic and seed at KBJC and at a site 15 km west, behind the first
+foothills ridge. On real Copernicus terrain the second site makes 63
+low-altitude (below 3,000 m) detections on bearings 45-135 deg against
+KBJC's 356, and terrain hides 1,198 of its looks; with the synthetic ridge
+the notebook test uses, 6 against 348. Radar-equation and one-way Pd match
+their expected values. `scenarios/kbjc-terrain.yaml` combines everything
+and runs in about 75 s once the tiles are cached; behind the ridge the
+trackers' OSPA rises to 615-664 m (from 445-542 m at KBJC with constant
+Pd), with completeness 0.54-0.64.
+
+Plan changes, all in DECISIONS.md: GLO-90 rather than GLO-30 by default
+(D26: I had understated the tile sizes), run ids hash the package source
+rather than a git commit (D25), and the `aircraft_json` adapter came before
+the radar equation (D28). Decisions are D25-D30.
+
+## Next: milestone 5, map playground
+
+From the design: a FastAPI service over scenarios and runs; a map UI to
+place and edit sensors, show coverage, and replay truth, detections and
+tracks with a time slider; side-by-side tracker comparison. Done when a
+sensor can be dropped on the map and a replay run from the browser with no
+file editing. Write the plan and get it approved before coding. Things
+milestone 4 leaves for it:
+
+- The run store (`eval.runstore`) is the natural backend for a runs API;
+  runs are immutable and addressed by id.
+- `TerrainHorizon.lowest_visible_height` gives coverage maps directly.
+- Scenarios accept inline specs, so the UI can write a scenario without
+  separate spec files.
+- Notebook tests now take a few minutes; worth trimming if CI time grows.
 
 ## Notes for the next session
 

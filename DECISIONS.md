@@ -317,3 +317,99 @@ file, so milestone 4 extends it rather than replacing it. `--out` writes a
 plain directory (resolved config, detections, opportunities, tracks per
 tracker, metrics.json, the table); the immutable, hash-addressed run store
 is milestone 4.
+
+## D25. Run ids hash the scenario, the inputs and the package source
+
+Decided with the milestone 4 plan: a run is stored once under
+`runs/<name>-<hash>/`, and an identical run is reused. The hash covers the
+resolved scenario (every spec inlined, the seed), digests of the input data
+(the truth file or directory, the terrain model, the aircraft-class CSV) and
+the code. The plan said "package version, git commit and a dirty flag" for
+the code; the implementation hashes the package's own source files plus the
+Stone Soup, NumPy and SciPy versions instead, because two different
+uncommitted edits would share a dirty flag. The git commit and dirty state
+are still recorded in the manifest for people. Runs are written to a hidden
+staging directory, made read-only and renamed into place, so a failure never
+leaves a partial run. `tracking-sim run --out DIR` still writes a plain
+directory outside the store.
+
+## D26. Terrain: Copernicus GLO-90 by default, horizons per sensor
+
+Decided with the plan: Copernicus DEM tiles (global, free, no login),
+downloaded once and cached, behind a `terrain` extra (tifffile and
+imagecodecs, for the tiles' floating-point predictor). The plan said GLO-30;
+I had quoted 25 MB a tile and one or two tiles, but a GLO-30 tile is about
+38 MB and a 110 km radar at KBJC needs about 12 (460 MB), so GLO-90 (about
+57 MB in all) became the default with `resolution_m: 30` as an option. At
+radar ranges 90 m terrain is ample for masking.
+
+Each sensor gets a `TerrainHorizon`: terrain heights sampled every 100 m in
+0.1 degree azimuth bins out to its maximum range, turned into elevation
+angles on a k-earth (4/3) and kept as a running maximum along range, so a
+target is masked if its own angle is below the terrain's anywhere nearer:
+one lookup per look. Heights are relative to the site's ground, so the
+geoid/ellipsoid offset cancels as for the radar horizon (D13). The `terrain`
+gate comes after `horizon`, and `coverage.terrain_masking: false` opts a
+sensor out. Checked against brute-force line of sight in tests and, on real
+terrain, at KBJC's field elevation (1,713 m from GLO-90 against 1,729 m
+published).
+
+## D27. Radar-equation Pd from a reference SNR, with RCS classes
+
+`detection.model: radar_equation` takes the SNR a 1 m^2 target has at a
+reference slant range rather than transmitter power, gain, wavelength,
+losses and noise figure: one number that's easy to tune and equivalent.
+SNR scales with RCS and (R_ref / R)^4; Pd is Swerling 1 (`Pfa^(1/(1+SNR))`,
+the default for aircraft) or Swerling 0 (Marcum Q via scipy's non-central
+chi-squared). The false-alarm density stays a separate setting rather than
+being derived from Pfa and the number of resolution cells, so the two can be
+tuned independently.
+
+Aircraft fall into RCS classes (light, small, large, heavy, rotorcraft,
+unknown) with mean RCS per class in the sensor spec, since RCS depends on
+the radar's band. Decided with the plan: the class comes from an optional
+`icao24,class` CSV, then the ADS-B emitter category, then a default; no
+third-party aircraft database. Each look carries its Pd, the detection draw
+compares the same per-look uniform number with it (so common random numbers
+still hold, D16), and stats compare the achieved Pd with the mean expected
+Pd. With varying Pd the count is Poisson-binomial, whose variance is at most
+the binomial's, so the Wilson interval is if anything conservative; 20 seeds
+of the terrain scenario's passive sensor gave a mean z of -0.11.
+
+## D28. aircraft_json: snapshot timing, repeats and NACp sigma
+
+Each `aircraft.json` poll is a snapshot: a position is stamped poll time
+minus `seen_pos`, velocity and identity poll time minus `seen`, and a
+position or velocity unchanged since the previous poll is the same report
+and is dropped. `alt_baro: "ground"` means on the ground; older dump1090-fa
+field names are accepted; non-ICAO (`~`) addresses are skipped by default.
+
+`TruthRecord` and recordings gained a nullable `category` (old recordings
+still read). Each segment takes its most common category, and its truth
+sigma from the median NACp of its positions: NACp bounds the 95% radial
+error (EPU) and sigma = EPU / 2.45 for a circular 2D Gaussian. SBS carries
+neither, so SBS-built truth is unchanged. I built this before the radar
+equation (swapping plan items 3 and 4) because RCS classes need the
+category.
+
+## D29. The passive sensor, and what trackers see with two sensor types
+
+`type: passive_bearing` is a staring receiver: every aircraft in coverage is
+a look at every update, through the same gates as the radar; it measures
+bearing only (`CartesianToSensorBearing`, Stone Soup's convention in the
+sensor's frame); Pd is constant or a one-way link (SNR ~ 1/R^2, steady
+emitter by default); false bearings are Poisson per update. The shared site,
+gates and opportunity bookkeeping moved into `sensors.base.GroundSensor`.
+
+Trackers can't use bearing-only detections until fusion (milestone 6), so
+scenarios feed trackers radar detections only and score them against the
+radars' coverage, on the first radar's scan grid. This is the rule D22 left
+open for a second sensor type. A scenario with trackers but no radar is an
+error.
+
+## D30. Synthetic categories without disturbing the fixture
+
+Synthetic receivers can report each flight's emitter category
+(`report_category`), derived from its kind and a CRC of its ICAO address,
+not from the random generator, so the committed fixture and every number
+measured on it are unchanged.
