@@ -12,6 +12,7 @@ WGS84, which is plenty for test traffic.
 
 from __future__ import annotations
 
+import zlib
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -343,7 +344,7 @@ def generate_traffic(
             _hear(
                 traffic,
                 receiver,
-                rng,
+                _receiver_rng(seed, receiver),
                 position_period_s,
                 velocity_period_s,
                 ident_period_s,
@@ -359,8 +360,9 @@ def generate_traffic(
             for r in traffic.records
             if r.source_id == receiver.duplicate_of and id(r) not in outliers
         ]
-        keep = rng.random(len(originals)) < receiver.hear_probability
-        delays = rng.uniform(*receiver.latency_s, size=len(originals))
+        dup_rng = _receiver_rng(seed, receiver)
+        keep = dup_rng.random(len(originals)) < receiver.hear_probability
+        delays = dup_rng.uniform(*receiver.latency_s, size=len(originals))
         traffic.records.extend(
             replace(r, source_id=receiver.source_id, ts=r.ts + timedelta(seconds=float(d)))
             for r, k, d in zip(originals, keep, delays, strict=True)
@@ -472,6 +474,16 @@ def _hear(
             records.append(bad)
             traffic.outliers.append(bad)
     return records
+
+
+def _receiver_rng(seed: int, receiver: ReceiverConfig) -> np.random.Generator:
+    """An RNG stream of its own per receiver.
+
+    The flights come from the main stream, so the same seed always gives the
+    same traffic; each receiver's noise is independent of every other
+    receiver's, and adding or removing a receiver leaves the others unchanged.
+    """
+    return np.random.default_rng([seed, zlib.crc32(receiver.source_id.encode())])
 
 
 def _stamp(
