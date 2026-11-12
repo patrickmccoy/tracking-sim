@@ -11,6 +11,7 @@ Variable                        Used for
 ``TRACKING_SIM_SBS_TZ``         Receiver time zone of SBS timestamps
 ``TRACKING_SIM_RECEIVER``       Receiver name used in ``source_id``
 ``TRACKING_SIM_RUNS``           Run store directory (default ``runs``)
+``TRACKING_SIM_AIRCRAFT_JSON``  URL of aircraft.json for ``record aircraft-json``
 ==============================  =======================================
 """
 
@@ -101,13 +102,31 @@ def _cmd_record_sbs(args: argparse.Namespace) -> int:
     return _run_record(args, lambda: _sbs_source(args))
 
 
+def _aircraft_json_source(args: argparse.Namespace) -> TruthSource:
+    from tracking_sim.truth.sources.aircraft_json import AircraftJsonSource
+
+    if not args.url:
+        raise SystemExit("record aircraft-json: give --url or set TRACKING_SIM_AIRCRAFT_JSON")
+    return AircraftJsonSource(url=args.url, receiver=args.receiver, poll_interval_s=args.interval)
+
+
+def _cmd_record_aircraft_json(args: argparse.Namespace) -> int:
+    return _run_record(args, lambda: _aircraft_json_source(args))
+
+
 def _cmd_export(args: argparse.Namespace) -> int:
-    source = SbsSource(
-        path=args.paths,
-        receiver=args.receiver,
-        tz=args.tz,
-        altitude_field=args.altitude_field,
-    )
+    source: TruthSource
+    if args.source == "aircraft-json":
+        from tracking_sim.truth.sources.aircraft_json import AircraftJsonSource
+
+        source = AircraftJsonSource(path=args.paths, receiver=args.receiver)
+    else:
+        source = SbsSource(
+            path=args.paths,
+            receiver=args.receiver,
+            tz=args.tz,
+            altitude_field=args.altitude_field,
+        )
     start = parse_time(args.start) if args.start else None
     end = parse_time(args.end) if args.end else None
     with RecordingWriter(args.out) as writer:
@@ -295,8 +314,22 @@ def build_parser() -> argparse.ArgumentParser:
     _add_record_limits(sbs)
     sbs.set_defaults(func=_cmd_record_sbs)
 
+    live_json = record_sources.add_parser(
+        "aircraft-json", help="poll readsb / dump1090-fa aircraft.json over HTTP"
+    )
+    live_json.add_argument(
+        "--url",
+        default=_env("TRACKING_SIM_AIRCRAFT_JSON"),
+        help="e.g. http://receiver/data/aircraft.json (or TRACKING_SIM_AIRCRAFT_JSON)",
+    )
+    live_json.add_argument("--interval", type=float, default=1.0, help="seconds between polls")
+    _add_receiver_option(live_json)
+    _add_output_options(live_json)
+    _add_record_limits(live_json)
+    live_json.set_defaults(func=_cmd_record_aircraft_json)
+
     export = commands.add_parser(
-        "export", help="convert a time window of captured SBS files into a recording file"
+        "export", help="convert a time window of captured feeds into a recording file"
     )
     export_sources = export.add_subparsers(dest="source", required=True)
     export_sbs = export_sources.add_parser("sbs", help="captured SBS-1 text files")
@@ -306,6 +339,15 @@ def build_parser() -> argparse.ArgumentParser:
     export_sbs.add_argument("--end", help="ISO 8601 end time (exclusive, default: open)")
     _add_output_options(export_sbs)
     export_sbs.set_defaults(func=_cmd_export)
+    export_json = export_sources.add_parser(
+        "aircraft-json", help="saved aircraft.json snapshots (.json, .jsonl, .gz, directories)"
+    )
+    export_json.add_argument("paths", nargs="+", type=Path, help="snapshot files or directories")
+    _add_receiver_option(export_json)
+    export_json.add_argument("--start", help="ISO 8601 start time (inclusive, default: open)")
+    export_json.add_argument("--end", help="ISO 8601 end time (exclusive, default: open)")
+    _add_output_options(export_json)
+    export_json.set_defaults(func=_cmd_export)
 
     compare = commands.add_parser(
         "compare",
@@ -369,6 +411,14 @@ def build_parser() -> argparse.ArgumentParser:
     info.add_argument("--end", help="ISO 8601 end time (exclusive)")
     info.set_defaults(func=_cmd_info)
     return parser
+
+
+def _add_receiver_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--receiver",
+        default=_env("TRACKING_SIM_RECEIVER", "default"),
+        help="receiver name; records get source_id aircraft_json:<receiver>",
+    )
 
 
 def _add_runs_option(parser: argparse.ArgumentParser) -> None:
