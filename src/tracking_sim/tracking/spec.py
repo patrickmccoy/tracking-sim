@@ -79,7 +79,9 @@ class InitiationSpec(_Spec):
 
     A new track is placed at ``assumed_height_m`` above the antenna (a 2D
     radar measures no height) with zero mean velocity, and becomes a
-    confirmed track after ``min_points`` associated detections.
+    confirmed track after ``min_points`` associated detections. Tentative
+    tracks are dropped sooner (``tentative_missed_scans``) than confirmed
+    ones, because every false alarm starts one.
     """
 
     min_points: int = Field(3, ge=2)
@@ -87,6 +89,10 @@ class InitiationSpec(_Spec):
     height_sigma_m: float = Field(3000.0, gt=0)
     speed_sigma_mps: float = Field(150.0, gt=0, description="prior horizontal speed spread")
     vertical_speed_sigma_mps: float = Field(10.0, gt=0)
+    turn_rate_sigma_deg: float = Field(3.0, gt=0, description="cv_ct only, deg/s")
+    tentative_missed_scans: int = Field(
+        2, ge=1, description="drop a tentative track after this many scans without an update"
+    )
 
 
 class DeletionSpec(_Spec):
