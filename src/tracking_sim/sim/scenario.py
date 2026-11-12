@@ -10,6 +10,7 @@ A minimal subset of the design's scenario format, enough for milestone 3's
       source: recording          # or sbs
       path: ../tests/data/synthetic_1h.parquet
       window: ["2026-11-01T23:00:00Z", "2026-11-02T00:00:00Z"]   # optional
+    terrain: {source: copernicus, resolution_m: 90}           # optional
     sensors: [sensors/radar-1.yaml]
     trackers: [trackers/ekf-cv-gnn.yaml, trackers/ukf-cv-gnn.yaml]
     seed: 42
@@ -27,7 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -39,6 +40,7 @@ from tracking_sim.config import load_yaml
 from tracking_sim.eval.metrics import MetricSettings, TrackerScore, comparison_table, score_run
 from tracking_sim.eval.scoring import ScoringGrid, scoring_grid, segment_of
 from tracking_sim.geo import LocalFrame
+from tracking_sim.geo.terrain import ElevationModel, FlatTerrain, SyntheticRidge
 from tracking_sim.sensors.spec import RotatingRadar2DSpec, load_sensor_spec, parse_sensor_spec
 from tracking_sim.sim.engine import ReplayEngine, SimulationResult
 from tracking_sim.tracking.runner import TrackerRun, detection_batches, run_tracker
@@ -74,6 +76,38 @@ class TruthSpec(_Spec):
         return self
 
 
+class RidgeSpec(_Spec):
+    """A synthetic ridge (see ``geo.terrain.SyntheticRidge``)."""
+
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    azimuth_deg: float = 0.0
+    height_m: float = Field(gt=0)
+    width_m: float = Field(1500.0, gt=0)
+    length_m: float = Field(60_000.0, gt=0)
+    base_m: float = 0.0
+
+
+class TerrainSpec(_Spec):
+    """Terrain for line-of-sight masking.
+
+    ``copernicus`` downloads (once) and caches Copernicus DEM tiles covering
+    every sensor's range; it needs the ``terrain`` extra. ``synthetic`` is
+    flat ground with one ``ridge``; ``flat`` is level ground at ``height_m``.
+    """
+
+    source: Literal["copernicus", "synthetic", "flat"]
+    resolution_m: Literal[30, 90] = 90
+    ridge: RidgeSpec | None = None
+    height_m: float = 0.0
+
+    @model_validator(mode="after")
+    def _check(self) -> TerrainSpec:
+        if self.source == "synthetic" and self.ridge is None:
+            raise ValueError("terrain source 'synthetic' needs a 'ridge'")
+        return self
+
+
 class MetricsSpec(_Spec):
     cutoff_m: float = Field(1000.0, gt=0)
     p: float = Field(1.0, ge=1)
@@ -86,6 +120,7 @@ class ScenarioSpec(_Spec):
     name: str = Field(min_length=1)
     origin: OriginSpec | None = None
     truth: TruthSpec
+    terrain: TerrainSpec | None = None
     sensors: list[str | dict[str, Any]] = Field(
         min_length=1, description="spec files, or specs written inline"
     )
@@ -104,6 +139,38 @@ class Scenario:
     base_dir: Path
     sensors: list[RotatingRadar2DSpec]
     trackers: list[TrackerSpec]
+    _terrain: Any = field(default=None, init=False, repr=False)
+
+    def terrain_model(self) -> ElevationModel | None:
+        """The scenario's terrain (loaded or downloaded once), or None."""
+        t = self.spec.terrain
+        if t is None:
+            return None
+        if self._terrain is None:
+            if t.source == "flat":
+                self._terrain = FlatTerrain(t.height_m)
+            elif t.source == "synthetic":
+                assert t.ridge is not None
+                self._terrain = SyntheticRidge(**t.ridge.model_dump())
+            else:
+                from tracking_sim.geo.copernicus import area_around, load_area
+
+                box = area_around(
+                    [(s.position.lat, s.position.lon, s.coverage.range_max_m) for s in self.sensors]
+                )
+                self._terrain = load_area(*box, resolution_m=t.resolution_m)
+        model: ElevationModel = self._terrain
+        return model
+
+    def input_digests(self) -> dict[str, str]:
+        """Digests of the data a run reads, for the run store."""
+        from tracking_sim.eval.runstore import input_digest
+
+        digests = {"truth": input_digest(self.truth_path)}
+        terrain = self.terrain_model()
+        if terrain is not None:
+            digests["terrain"] = terrain.digest()
+        return digests
 
     @property
     def truth_path(self) -> Path:
@@ -125,12 +192,14 @@ class Scenario:
         )
 
     def with_seed(self, seed: int) -> Scenario:
-        return Scenario(
+        other = Scenario(
             spec=self.spec.model_copy(update={"seed": seed}),
             base_dir=self.base_dir,
             sensors=self.sensors,
             trackers=self.trackers,
         )
+        other._terrain = self._terrain
+        return other
 
     def resolved(self) -> dict[str, Any]:
         """The full configuration, every referenced file inlined."""
@@ -247,7 +316,10 @@ def run_scenario(scenario: Scenario) -> ScenarioResult:
     started = time.perf_counter()
     window = scenario.spec.truth.window
     start, end = (window[0], window[1]) if window else (None, None)
-    simulation = ReplayEngine(truth, scenario.sensors, seed=scenario.spec.seed).run(start, end)
+    engine = ReplayEngine(
+        truth, scenario.sensors, seed=scenario.spec.seed, terrain=scenario.terrain_model()
+    )
+    simulation = engine.run(start, end)
     grid = scoring_grid(truth, simulation)
     batches = detection_batches(simulation.scans)
     timings["sensors"] = time.perf_counter() - started

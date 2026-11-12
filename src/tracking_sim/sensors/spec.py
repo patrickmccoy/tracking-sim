@@ -73,7 +73,8 @@ class CoverageSpec(_Spec):
     ``[300, 60]`` covers north. ``[0, 360]`` is all round. ``elevation_deg``
     limits the geometric elevation angle from the antenna. ``radar_horizon``
     applies a line-of-sight check on an earth of ``refraction_k`` times its
-    real radius (4/3 is the standard-atmosphere value).
+    real radius (4/3 is the standard-atmosphere value). When the scenario
+    has terrain, ``terrain_masking`` also hides targets behind it.
     """
 
     range_min_m: float = Field(0.0, ge=0)
@@ -82,6 +83,9 @@ class CoverageSpec(_Spec):
     elevation_deg: tuple[float, float] = (-90.0, 90.0)
     radar_horizon: bool = True
     refraction_k: float = Field(4.0 / 3.0, gt=0)
+    terrain_masking: bool = Field(
+        True, description="mask behind terrain when the scenario has a terrain model"
+    )
 
     @model_validator(mode="after")
     def _check(self) -> CoverageSpec:

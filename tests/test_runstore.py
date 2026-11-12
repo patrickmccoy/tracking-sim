@@ -140,3 +140,32 @@ def test_runs_commands(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> No
         store.get("nothing-like-this")
     metrics = json.loads((store.root / a / "metrics.json").read_text())
     assert metrics["trackers"][0]["tracker"] == "ekf"
+
+
+def test_terrain_is_part_of_the_scenario_and_the_run_id(tmp_path: Path) -> None:
+    path = scenario_file(tmp_path)
+    plain_id, _ = RunStore(tmp_path / "runs").plan(load_scenario(path))
+    data = yaml.safe_load(path.read_text())
+    data["terrain"] = {
+        "source": "synthetic",
+        "ridge": {
+            "lat": 39.9088,
+            "lon": -105.29,
+            "azimuth_deg": 0,
+            "height_m": 1500,
+            "base_m": 1729,
+        },
+    }
+    ridged = tmp_path / "ridged.yaml"
+    ridged.write_text(yaml.safe_dump(data))
+    scenario = load_scenario(ridged)
+    assert type(scenario.terrain_model()).__name__ == "SyntheticRidge"
+    rid, manifest = RunStore(tmp_path / "runs").plan(scenario)
+    assert rid != plain_id and manifest["inputs"]["terrain"].startswith("ridge:")
+    record = RunStore(tmp_path / "runs").run(scenario)
+    assert "terrain" in record.summary
+
+    data["terrain"] = {"source": "synthetic"}
+    ridged.write_text(yaml.safe_dump(data))
+    with pytest.raises(ValueError, match="ridge"):
+        load_scenario(ridged)

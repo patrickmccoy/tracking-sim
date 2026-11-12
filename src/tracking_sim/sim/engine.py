@@ -35,6 +35,8 @@ import pyarrow.parquet as pq
 from stonesoup.types.detection import Detection, TrueDetection
 from stonesoup.types.groundtruth import GroundTruthPath
 
+from tracking_sim.geo import SensorSite
+from tracking_sim.geo.terrain import ElevationModel, TerrainHorizon
 from tracking_sim.sensors.measurement import bearing_to_compass
 from tracking_sim.sensors.radar import RotatingRadar2D, ScanResult
 from tracking_sim.sensors.spec import RotatingRadar2DSpec
@@ -271,7 +273,9 @@ class ReplayEngine:
     """Replay a truth set past sensors, deterministically for a given seed.
 
     ``truth_step_s`` is the spacing of the Stone Soup ``GroundTruthPath``
-    states that detections link to (built once per engine).
+    states that detections link to (built once per engine). With a
+    ``terrain`` model, each sensor also masks targets behind terrain (unless
+    its spec turns ``terrain_masking`` off).
     """
 
     def __init__(
@@ -281,6 +285,7 @@ class ReplayEngine:
         *,
         seed: int,
         truth_step_s: float = 1.0,
+        terrain: ElevationModel | None = None,
     ) -> None:
         ids = [s.id for s in sensors]
         if len(set(ids)) != len(ids):
@@ -291,7 +296,9 @@ class ReplayEngine:
         self.specs = list(sensors)
         self.seed = seed
         self.truth_step_s = truth_step_s
+        self.terrain = terrain
         self._paths: dict[str, GroundTruthPath] | None = None
+        self._horizons: dict[str, TerrainHorizon] = {}
 
     @property
     def paths(self) -> dict[str, GroundTruthPath]:
@@ -319,8 +326,20 @@ class ReplayEngine:
         streams = [self._sensor_scans(spec, lo, hi) for spec in self.specs]
         yield from heapq.merge(*streams, key=lambda s: (s.end, s.sensor_id))
 
+    def horizon(self, spec: RotatingRadar2DSpec) -> TerrainHorizon | None:
+        """The sensor's terrain horizon (built once), if there is terrain and it masks."""
+        if self.terrain is None or not spec.coverage.terrain_masking:
+            return None
+        if spec.id not in self._horizons:
+            pos = spec.position
+            site = SensorSite(self.truth.frame, pos.lat, pos.lon, pos.alt_m, pos.mast_m)
+            self._horizons[spec.id] = TerrainHorizon(
+                site, self.terrain, spec.coverage.range_max_m, k=spec.coverage.refraction_k
+            )
+        return self._horizons[spec.id]
+
     def _radar(self, spec: RotatingRadar2DSpec, start: datetime) -> RotatingRadar2D:
-        return RotatingRadar2D(spec, self.truth.frame, start)
+        return RotatingRadar2D(spec, self.truth.frame, start, terrain=self.horizon(spec))
 
     def _whole_scans(self, spec: RotatingRadar2DSpec, start: datetime, end: datetime) -> int:
         return int((end - start).total_seconds() // spec.scan.period_s)

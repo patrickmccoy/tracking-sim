@@ -127,6 +127,7 @@ def test_tables_and_parquet(truth: TruthSet, tmp_path: Path) -> None:
         "azimuth",
         "elevation",
         "horizon",
+        "terrain",
     }
 
 
@@ -143,3 +144,44 @@ def test_engine_rejects_bad_input(truth: TruthSet) -> None:
         ReplayEngine(truth, [], seed=1)
     with pytest.raises(ValueError, match="after start"):
         ReplayEngine(truth, [spec()], seed=1).run(END, START)
+
+
+def test_terrain_removes_low_detections_on_the_ridge_bearing(truth: TruthSet) -> None:
+    import numpy as np
+    import pymap3d
+
+    from tracking_sim.geo.terrain import SyntheticRidge
+
+    lat, lon, _ = pymap3d.enu2geodetic(-15_000.0, 0.0, 0.0, *ORIGIN)
+    ridge = SyntheticRidge(
+        float(lat),
+        float(lon),
+        azimuth_deg=0.0,
+        height_m=1500.0,
+        width_m=1500.0,
+        length_m=40_000.0,
+        base_m=ORIGIN[2],
+    )
+    radar = spec(detection={"pd": 1.0, "false_alarm_density": 0.0})
+    flat = ReplayEngine(truth, [radar], seed=1).run(START, END)
+    hilly_engine = ReplayEngine(truth, [radar], seed=1, terrain=ridge)
+    hilly = hilly_engine.run(START, END)
+    gated = hilly.stats("radar-1").gated
+    assert gated.get("terrain", 0) > 0 and "terrain" not in flat.stats("radar-1").gated
+
+    def targets(result: Any) -> Any:
+        t = result.detections_table()
+        return t.filter(pc.equal(t["kind"], "target")).to_pandas()
+
+    lost = set(targets(flat)["timestamp"]) - set(targets(hilly)["timestamp"])
+    opp = hilly.opportunities_table().to_pandas()
+    removed = opp[opp["gate"] == "terrain"]
+    assert len(lost) == len(removed) > 0
+    assert removed["azimuth_deg"].between(180, 360).all()  # only on the ridge side
+    # Only aircraft below the ridge's shadow: the height needed grows with range.
+    horizon = hilly_engine.horizon(radar)
+    assert horizon is not None
+    need = horizon.lowest_visible_height(
+        np.radians(removed["azimuth_deg"].to_numpy()), removed["ground_range_m"].to_numpy()
+    )
+    assert (removed["height_m"].to_numpy() < need).all()

@@ -255,3 +255,54 @@ def test_no_false_alarms_by_default(truth: TruthSet, paths: dict[str, GroundTrut
     crossings, _ = r.crossings(truth, START, END)
     result = r.observe(0, [c for c in crossings if c.scan == 0], sensor_streams(1, "x"), paths)
     assert result.clutter == [] and r.expected_false_alarms == 0
+
+
+def ridge_west(distance_m: float = 15_000.0, height_m: float = 1500.0) -> Any:
+    import pymap3d
+
+    from tracking_sim.geo.terrain import SyntheticRidge
+
+    lat, lon, _ = pymap3d.enu2geodetic(-distance_m, 0.0, 0.0, ORIGIN[0], ORIGIN[1], ORIGIN[2])
+    return SyntheticRidge(
+        float(lat),
+        float(lon),
+        azimuth_deg=0.0,
+        height_m=height_m,
+        width_m=1500.0,
+        length_m=40_000.0,
+        base_m=ORIGIN[2],
+    )
+
+
+def test_terrain_gate_hides_low_aircraft_behind_a_ridge(truth: TruthSet) -> None:
+    from tracking_sim.geo.terrain import TerrainHorizon
+
+    plain = radar(coverage={"range_max_m": 150_000})
+    horizon = TerrainHorizon(plain.site, ridge_west(), 150_000.0)
+    masked = RotatingRadar2D(plain.spec, FRAME, START, terrain=horizon)
+    open_c, _ = plain.crossings(truth, START, END)
+    ridge_c, _ = masked.crossings(truth, START, END)
+    assert [c.t for c in open_c] == [c.t for c in ridge_c]  # same crossings, more gated
+    hidden = [c for c in ridge_c if c.gate == "terrain"]
+    assert hidden, "the ridge should hide someone"
+    for c in hidden:
+        az = np.degrees(c.azimuth)
+        assert 180.0 < az < 360.0  # west of the radar
+        need = float(horizon.lowest_visible_height(c.azimuth, c.ground_range))
+        assert c.height_m < need
+    for a, b in zip(open_c, ridge_c, strict=True):
+        if a.gate is not None:
+            assert b.gate == a.gate  # earlier gates win
+        elif b.gate is None:
+            continue
+        else:
+            assert b.gate == "terrain"
+    # Opting out restores everything.
+    off = parse_sensor_spec(
+        {
+            **plain.spec.model_dump(),
+            "coverage": {**plain.spec.coverage.model_dump(), "terrain_masking": False},
+        }
+    )
+    unmasked = RotatingRadar2D(off, FRAME, START, terrain=horizon)
+    assert not any(c.gate == "terrain" for c in unmasked.crossings(truth, START, END)[0])

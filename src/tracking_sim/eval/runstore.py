@@ -4,7 +4,8 @@ Every run of a scenario is written once to ``<root>/<run id>/`` and never
 changed. The run id is a hash of everything that determines the result:
 
 * the resolved scenario (every sensor and tracker spec inlined, the seed);
-* a digest of the input data (the truth recording or SBS files);
+* digests of the input data (the truth recording or SBS files, and the
+  terrain model if there is one);
 * the code: a digest of the ``tracking_sim`` source files and the versions
   of the libraries that shape results (Stone Soup, NumPy, SciPy).
 
@@ -162,7 +163,7 @@ class RunStore:
     def plan(self, scenario: Any) -> tuple[str, dict[str, Any]]:
         """The run id ``scenario`` would get, and its manifest without results."""
         resolved = scenario.resolved()
-        inputs = {"truth": input_digest(scenario.truth_path)}
+        inputs = scenario.input_digests()
         code = code_identity()
         rid = run_id(scenario.spec.name, resolved, inputs, code)
         manifest = {

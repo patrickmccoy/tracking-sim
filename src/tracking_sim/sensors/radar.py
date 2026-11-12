@@ -5,7 +5,8 @@ Per scan, for each aircraft, the radar:
 1. finds when its beam crosses the aircraft and samples truth at that moment
    (``BeamSchedule``), not at the scan start;
 2. applies the geometry gates: slant range limits, azimuth sector,
-   elevation limits and the 4/3-earth radar horizon;
+   elevation limits, the 4/3-earth radar horizon and, with a terrain
+   model, line of sight over the terrain;
 3. draws a detection with probability Pd;
 4. adds Gaussian noise to slant range and bearing;
 5. merges detected targets closer together than the resolution cell;
@@ -37,6 +38,7 @@ from stonesoup.types.detection import Clutter, Detection, TrueDetection
 from stonesoup.types.groundtruth import GroundTruthPath
 
 from tracking_sim.geo import LocalFrame, SensorSite, radar_horizon_visible
+from tracking_sim.geo.terrain import TerrainHorizon
 from tracking_sim.sensors.measurement import CartesianToBearingSlantRange, compass_to_bearing
 from tracking_sim.sensors.scan import BeamSchedule
 from tracking_sim.sensors.spec import RotatingRadar2DSpec
@@ -52,7 +54,7 @@ __all__ = ["Crossing", "RotatingRadar2D", "ScanResult"]
 FloatArray = NDArray[np.float64]
 
 # Gate names, in the order they are checked.
-GATES = ("range", "azimuth", "elevation", "horizon")
+GATES = ("range", "azimuth", "elevation", "horizon", "terrain")
 
 
 @dataclass(frozen=True)
@@ -121,12 +123,22 @@ class RotatingRadar2D:
     ``k`` covers ``[t_ref + k * period, t_ref + (k + 1) * period)``.
     """
 
-    def __init__(self, spec: RotatingRadar2DSpec, frame: LocalFrame, t_ref: datetime) -> None:
+    def __init__(
+        self,
+        spec: RotatingRadar2DSpec,
+        frame: LocalFrame,
+        t_ref: datetime,
+        *,
+        terrain: TerrainHorizon | None = None,
+    ) -> None:
         self.spec = spec
         self.frame = frame
         self.t_ref = ensure_utc(t_ref)
         pos = spec.position
         self.site = SensorSite(frame, pos.lat, pos.lon, pos.alt_m, pos.mast_m)
+        if terrain is not None and terrain.site != self.site:
+            raise ValueError("the terrain horizon was built for a different site")
+        self.terrain = terrain if spec.coverage.terrain_masking else None
         self.beam = BeamSchedule(
             t_ref=self.t_ref.timestamp(),
             period_s=spec.scan.period_s,
@@ -247,7 +259,11 @@ class RotatingRadar2D:
             )
         else:
             ok_horizon = np.ones_like(az, dtype=bool)
-        checks = (ok_range, ok_az, ok_el, ok_horizon)
+        if self.terrain is not None:
+            ok_terrain = ~self.terrain.masked(az, ground, height)
+        else:
+            ok_terrain = np.ones_like(az, dtype=bool)
+        checks = (ok_range, ok_az, ok_el, ok_horizon, ok_terrain)
         result: list[str | None] = []
         for i in range(len(az)):
             result.append(
