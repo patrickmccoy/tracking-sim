@@ -75,6 +75,7 @@ class DetectionStats:
     expected_false_alarms_per_scan: float
     gated: dict[str, int]
     pd_model: str = "constant"
+    looks: str = "beam crossings"  # what a look is called for this sensor
 
     @property
     def achieved_pd(self) -> float:
@@ -104,9 +105,9 @@ class DetectionStats:
         lo, hi = self.pd_interval
         gated = ", ".join(f"{k} {v}" for k, v in self.gated.items() if v) or "none"
         verdict = "consistent" if self.pd_consistent else "NOT consistent"
-        label = "configured" if self.pd_model == "constant" else "expected (radar equation)"
+        label = "configured" if self.pd_model == "constant" else f"expected ({self.pd_model})"
         return (
-            f"{self.sensor_id}: {self.scans} scans, {self.crossings} beam crossings, "
+            f"{self.sensor_id}: {self.scans} scans, {self.crossings} {self.looks}, "
             f"gated: {gated}\n"
             f"  achieved Pd {self.achieved_pd:.3f} ({self.detected}/{self.opportunities}), "
             f"95% interval [{lo:.3f}, {hi:.3f}], {label} {self.configured_pd:.3f}: {verdict}\n"
@@ -164,6 +165,7 @@ class SimulationResult:
             expected_false_alarms_per_scan=radar.expected_false_alarms,
             gated=gated,
             pd_model=radar.spec.detection.model,
+            looks="beam crossings" if isinstance(radar, RotatingRadar2D) else "looks",
         )
 
     def summary(self) -> str:

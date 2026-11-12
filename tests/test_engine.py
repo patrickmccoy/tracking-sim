@@ -210,7 +210,7 @@ def test_radar_equation_pd(tmp_path: Path) -> None:
     assert stats.pd_model == "radar_equation"
     lo, hi = wilson_interval(stats.detected, stats.opportunities, z=3.29)
     assert lo <= stats.configured_pd <= hi
-    assert "expected (radar equation)" in stats.summary()
+    assert "expected (radar_equation)" in stats.summary()
 
     opp = result.opportunities_table().to_pandas()
     seen = opp[opp["in_coverage"]]
