@@ -103,26 +103,67 @@ synthetic fixture until real recordings are available.
 
 Decisions are D12-D17 in DECISIONS.md.
 
-## Next: milestone 3, tracking and metrics
+## Milestone 3: tracking and metrics
 
-From the design: a tracker factory from config with the baseline (extended
-Kalman filter, constant velocity, global nearest neighbour), a second and
-third tracker (unscented, multiple-model) for comparison, and OSPA, GOSPA
-and SIAP metrics; done when one command runs a scenario with three
-trackers and prints a comparison table. Write the plan and get it approved
-before coding.
+Plan (approved at the start of the milestone):
 
-Things milestone 2 leaves for it:
+1. Tracker spec and YAML loading: a Pydantic model with enumerated choices
+   per component (motion model: constant velocity, or constant velocity
+   plus coordinated turn for multiple models; filter: EKF, UKF or
+   multiple-model particle; association: GNN with Mahalanobis gating;
+   initiation: assumed height and its uncertainty, detections to confirm;
+   deletion), and example specs for the three trackers.
+2. Tracker factory: Stone Soup components from a spec and the sensor's
+   measurement model. EKF and UKF track `[x, vx, y, vy, z, vz]`; the
+   multiple-model particle filter tracks `[x, vx, y, vy, w, z, vz]` (turn
+   rate placed so Stone Soup's model mappings work). Tentative tracks use a
+   cheap EKF in every tracker; the multiple-model tracker samples particles
+   only on confirmation, through a small initiator wrapper.
+3. Running trackers: detections from the replay engine, one scan per batch
+   in report-time order, each predicted to its own measurement time. The
+   runner seeds numpy's global random state from the run seed and tracker
+   id before each tracker (Stone Soup's particle filter draws from it) and
+   runs trackers one after another. Tracks to Parquet.
+4. Scoring truth: truth paths cut to the times each aircraft was in
+   coverage, from the milestone 2 opportunities.
+5. Metrics: OSPA, GOSPA and SIAP on horizontal position (Stone Soup), track
+   latency, and a comparison table with run time.
+6. Minimal scenario file and CLI: `tracking-sim run scenario.yaml [--out DIR]`,
+   a subset of the design's scenario format (name, origin, truth path and
+   window, sensor and tracker spec files, seed). Sensors run once and every
+   tracker gets the same detections.
+7. Notebook `03_tracking.ipynb`: tracks over truth, OSPA and GOSPA over
+   time, the comparison table, one aircraft through a turn.
+8. Docs: this file, DECISIONS.md, README.
 
-- Detections are in `[bearing, slant range]` with
-  `CartesianToBearingSlantRange`; initiators need a height guess
-  (`inverse_height_m`) or a 3D-aware initiation, since a 2D radar does not
-  measure altitude. The state is still 6D ENU.
-- Each detection has a measurement time (`timestamp`) and a report time
-  (`metadata["report_time"]`, adding the sensor latency). Trackers should
-  consume them in report-time order but update at measurement time.
-- The "one command" needs a CLI and probably a minimal scenario file before
-  milestone 4's full scenario format; agree the shape in the plan.
+Decided with the plan: the third tracker is Stone Soup's multiple-model
+particle filter (1.9.1 has no Kalman IMM); trackers carry altitude in a 6D
+(or 7D) state with a vague height prior rather than tracking only
+horizontally; scoring uses truth only while in coverage; the command takes
+a minimal scenario YAML.
+
+Defaults: OSPA/GOSPA cut-off 1 km with p = 1; SIAP association threshold
+1 km; 1,000 particles per confirmed track; assumed height 5,000 m ± 3,000 m
+above the antenna; confirm after 3 associated detections; delete after 3
+consecutive missed scans.
+
+Risk: about 38 false alarms a scan spawn many tentative tracks. They stay
+on the cheap EKF, but if an hour runs too slowly that is reported, not
+hidden by lowering the clutter.
+
+Carried over from milestone 2: detections are `[bearing, slant range]`
+with `CartesianToBearingSlantRange`, which needs a height guess
+(`inverse_height_m`) to initiate; each detection has a measurement time
+(`timestamp`) and a report time (`metadata["report_time"]`).
+
+Status:
+
+- [ ] Tracker factory from config, with the baseline tracker
+- [ ] A second and third tracker (unscented, multiple-model) for comparison
+- [ ] OSPA, GOSPA, and SIAP metrics
+
+Done when one command runs a scenario with three trackers and prints a
+comparison table.
 
 ## Notes for the next session
 
