@@ -30,6 +30,7 @@ __all__ = [
 ]
 
 FT = 0.3048
+_EARTH_RADIUS_M = 6_371_000.0
 KT = 1852.0 / 3600.0
 FPM = FT / 60.0
 
@@ -371,7 +372,6 @@ def _hear(
     ident_period_s: float,
     baro_offset_ft: float,
 ) -> list[TruthRecord]:
-    lat0, lon0, _ = traffic.origin
     records: list[TruthRecord] = []
     for flight in traffic.flights:
         t0, t1 = float(flight.t[0]), float(flight.t[-1])
@@ -390,8 +390,10 @@ def _hear(
 
         pos = flight.sample(pos_t)
         noise = rng.normal(0.0, receiver.position_sigma_m, size=(2, len(pos_t)))
-        e, n, _ = pymap3d.geodetic2enu(pos["lat"], pos["lon"], 0.0, lat0, lon0, 0.0)
-        lat, lon, _ = pymap3d.enu2geodetic(e + noise[0], n + noise[1], 0.0, lat0, lon0, 0.0)
+        # Offset each point by metres of noise around itself; a few metres is
+        # far too small for the spherical approximation to matter.
+        lat = pos["lat"] + np.degrees(noise[1] / _EARTH_RADIUS_M)
+        lon = pos["lon"] + np.degrees(noise[0] / (_EARTH_RADIUS_M * np.cos(np.radians(pos["lat"]))))
         geom_ft = pos["alt_m"] / FT
         alt_ft = geom_ft if receiver.altitude_field == "alt_geom_ft" else geom_ft - baro_offset_ft
         alt_ft = np.round(alt_ft / 25.0) * 25.0
