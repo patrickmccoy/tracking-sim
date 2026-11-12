@@ -169,21 +169,20 @@ def test_terrain_removes_low_detections_on_the_ridge_bearing(truth: TruthSet) ->
     gated = hilly.stats("radar-1").gated
     assert gated.get("terrain", 0) > 0 and "terrain" not in flat.stats("radar-1").gated
 
-    def targets(result: Any) -> Any:
+    def target_times(result: Any) -> set[Any]:
         t = result.detections_table()
-        return t.filter(pc.equal(t["kind"], "target")).to_pandas()
+        return set(t.filter(pc.equal(t["kind"], "target"))["timestamp"].to_pylist())
 
-    lost = set(targets(flat)["timestamp"]) - set(targets(hilly)["timestamp"])
-    opp = hilly.opportunities_table().to_pandas()
-    removed = opp[opp["gate"] == "terrain"]
-    assert len(lost) == len(removed) > 0
-    assert removed["azimuth_deg"].between(180, 360).all()  # only on the ridge side
+    lost = target_times(flat) - target_times(hilly)
+    opp = hilly.opportunities_table()
+    removed = opp.filter(pc.equal(opp["gate"], "terrain"))
+    az = removed["azimuth_deg"].to_numpy()
+    assert len(lost) == removed.num_rows > 0
+    assert np.all((az >= 180) & (az <= 360))  # only on the ridge side
     # Only aircraft below the ridge's shadow: the height needed grows with range.
     horizon = hilly_engine.horizon(radar)
     assert horizon is not None
-    need = horizon.lowest_visible_height(
-        np.radians(removed["azimuth_deg"].to_numpy()), removed["ground_range_m"].to_numpy()
-    )
+    need = horizon.lowest_visible_height(np.radians(az), removed["ground_range_m"].to_numpy())
     assert (removed["height_m"].to_numpy() < need).all()
 
 
@@ -212,17 +211,21 @@ def test_radar_equation_pd(tmp_path: Path) -> None:
     assert lo <= stats.configured_pd <= hi
     assert "expected (radar_equation)" in stats.summary()
 
-    opp = result.opportunities_table().to_pandas()
-    seen = opp[opp["in_coverage"]]
+    opp = result.opportunities_table()
+    seen = opp.filter(opp["in_coverage"])
+    cls = np.array(seen["rcs_class"].to_pylist())
+    rng = seen["slant_range_m"].to_numpy()
+    pd = seen["pd"].to_numpy()
     # Pd falls with range within a class, and bigger classes are easier to see.
-    for _, rows in seen.groupby("rcs_class"):
-        rows = rows.sort_values("slant_range_m")
-        if len(rows) > 10:
-            assert np.all(np.diff(rows["pd"].to_numpy()) <= 1e-12)
-    at = seen[seen["slant_range_m"].between(60_000, 80_000)].groupby("rcs_class")["pd"].mean()
-    if {"light", "large"} <= set(at.index):
-        assert at["light"] < at["large"]
-    by_segment = dict(zip(seen["segment_id"], seen["rcs_class"], strict=False))
+    for name in set(cls):
+        mine = cls == name
+        if mine.sum() > 10:
+            order = np.argsort(rng[mine])
+            assert np.all(np.diff(pd[mine][order]) <= 1e-12)
+    band = (rng >= 60_000) & (rng <= 80_000)
+    if ((cls == "light") & band).any() and ((cls == "large") & band).any():
+        assert pd[(cls == "light") & band].mean() < pd[(cls == "large") & band].mean()
+    by_segment = dict(zip(seen["segment_id"].to_pylist(), cls, strict=True))
     for seg in truth:
         if seg.segment_id in by_segment:
             expected = {"A1": "light", "A2": "small", "A3": "large", "A5": "heavy"}
@@ -231,5 +234,5 @@ def test_radar_equation_pd(tmp_path: Path) -> None:
     # A table of classes overrides the ADS-B category.
     table = {seg.icao24: "rotorcraft" for seg in truth}
     forced = ReplayEngine(truth, [radar], seed=11, aircraft_classes=table).run(START, END)
-    classes = forced.opportunities_table().to_pandas()["rcs_class"]
+    classes = forced.opportunities_table()["rcs_class"].to_pylist()
     assert set(classes) == {"rotorcraft"}
