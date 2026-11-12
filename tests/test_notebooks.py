@@ -18,6 +18,16 @@ EXPECTED = {
         ["configured 0.9: consistent", "identical = True", "same beam crossings: True"],
         ["NOT consistent"],
     ),
+    "04_scenarios_and_terrain.ipynb": (
+        [
+            "terrain: synthetic ridge",
+            "loses most low-altitude traffic on those bearings: True",
+            "expected (radar_equation)",
+            "expected (one_way)",
+            "reused stored run: True",
+        ],
+        ["NOT consistent"],
+    ),
     "03_tracking.ipynb": (
         ["trackers: ekf-cv-gnn, ukf-cv-gnn, pf-mm-gnn", "lowest mean OSPA:", "configured 0.900"],
         [],
@@ -44,6 +54,8 @@ def test_notebook_runs(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("MPLBACKEND", "Agg")
+    # Notebook 04 downloads real terrain by default; tests stay offline.
+    monkeypatch.setenv("TRACKING_SIM_TERRAIN", "synthetic")
     nb = nbformat.read(path, as_version=4)
     client = nbclient.NotebookClient(
         nb, timeout=600, kernel_name="python3", resources={"metadata": {"path": str(path.parent)}}
