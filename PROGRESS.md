@@ -196,22 +196,66 @@ state (D20), and a geometric pre-gate keeps clutter affordable (D21).
 The test suite now takes about three minutes with the notebook extra,
 mostly notebook 03 running the full hour.
 
-## Next: milestone 4, scenarios and realism
+## Milestone 4: scenarios and realism
 
-From the design: scenario files and the immutable run store, terrain
-masking from a DEM, radar-equation Pd with RCS classes, the
-`aircraft_json` adapter, and a second sensor type (passive bearing-only);
-done when moving a radar behind a ridge visibly removes low-altitude
-detections on that bearing. Write the plan and get it approved before
-coding. Things milestone 3 leaves for it:
+Plan (approved at the start of the milestone):
 
-- The scenario format (`tracking_sim.sim.scenario`) is a deliberate subset;
-  extend it rather than replacing it, and turn `--out` directories into the
-  run store.
-- The scoring grid uses the first sensor's scans (D22); a second sensor
-  type needs a rule for that.
-- `aircraft_json` brings geometric altitude: a chance to score heights and
-  to replace the assumed-height prior where a sensor has height.
+1. Scenario format and the immutable run store: a `terrain:` section and
+   inline sensors in the scenario; runs written once to `runs/<run-id>/`
+   with a manifest (resolved config, input digests, code version, seed);
+   an identical re-run reuses the stored run; `tracking-sim runs list`,
+   `runs show`, `runs compare A B`.
+2. Terrain masking from a DEM: Copernicus GLO-30 tiles downloaded once and
+   cached under `~/.cache/tracking-sim/` (optional `terrain` extra);
+   per-sensor terrain horizon (max terrain elevation angle per azimuth bin
+   out to each range, 4/3 earth) so a check is one lookup; a `terrain`
+   gate after the radar horizon; a synthetic ridge for tests.
+3. Radar-equation Pd with RCS classes: reference SNR at a reference range
+   for 1 m^2, SNR ~ 1/R^4, Swerling 1 single-pulse Pd (Swerling 0 via
+   scipy's non-central chi-squared as an option); RCS classes light,
+   small, large, heavy, rotorcraft and unknown.
+4. `aircraft_json` adapter: readsb/dump1090-fa `aircraft.json`, live polling
+   and saved snapshots; position time = poll time - `seen_pos`, repeats
+   dropped; geometric altitude, NACp and emitter category (`TruthRecord`
+   and recordings gain a nullable `category`; old recordings still read);
+   segment truth sigma from NACp; `record`/`export aircraft-json`.
+5. Passive bearing-only sensor (`type: passive_bearing`): staring, every
+   target in coverage once per period (1 s default), azimuth only via
+   Stone Soup's `Cartesian2DToBearing`, bearing noise, Pd falling with
+   range, false bearings, horizon and terrain gates. Detections only;
+   fusion and bearing-only tracking wait for milestone 6.
+6. Notebook `04_scenarios_and_terrain.ipynb`: coverage with and without
+   terrain, the radar moved behind a ridge, Pd by range and RCS class, the
+   passive sensor, the run store.
+7. Docs.
+
+Decided with the plan:
+
+- DEM: Copernicus GLO-30 (global 30 m, free, no login), read with tifffile.
+- Ridge demo: real terrain downloaded on first run (the Front Range west of
+  KBJC), with a synthetic ridge when offline; the notebook test uses the
+  synthetic one, so CI needs no network.
+- RCS class: ADS-B emitter category when present, then an optional user
+  CSV of icao24 to class, then a configurable default.
+- Run id: a hash of the resolved config, input digests, seed and code
+  version (package version, git commit, and a flag for uncommitted
+  changes), so a code change never silently reuses old results.
+
+Carried over from milestone 3: the scenario format is a subset to extend,
+not replace; the scoring grid uses the first sensor's scans (D22), which a
+second sensor type needs a rule for; `aircraft_json` geometric altitude is a
+chance to score heights.
+
+Status:
+
+- [ ] Scenario files and the immutable run store
+- [ ] Terrain masking from a DEM
+- [ ] Radar equation Pd with RCS classes
+- [ ] `aircraft_json` adapter, bringing geometric altitude and NACp
+- [ ] A second sensor type (passive bearing-only)
+
+Done when moving a radar behind a ridge visibly removes low-altitude
+detections on that bearing.
 
 ## Notes for the next session
 
