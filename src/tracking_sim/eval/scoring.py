@@ -81,18 +81,25 @@ class ScoringGrid:
         return out
 
 
-def scoring_grid(truth: TruthSet, simulation: SimulationResult) -> ScoringGrid:
-    """The evaluation grid for ``simulation`` and the truth visible on it."""
-    if not simulation.scans:
-        raise ValueError("the simulation has no scans")
-    first = simulation.scans[0].sensor_id
+def scoring_grid(
+    truth: TruthSet, simulation: SimulationResult, *, sensor_ids: list[str] | None = None
+) -> ScoringGrid:
+    """The evaluation grid for ``simulation`` and the truth visible on it.
+
+    ``sensor_ids`` limits both to the sensors whose detections the trackers
+    used (default: all); the grid follows the first of them.
+    """
+    scans = [s for s in simulation.scans if sensor_ids is None or s.sensor_id in sensor_ids]
+    if not scans:
+        raise ValueError("the simulation has no scans from those sensors")
+    first = sensor_ids[0] if sensor_ids else scans[0].sensor_id
     radar = simulation.radars[first]
     period = radar.period_s
-    times = sorted(s.end for s in simulation.scans if s.sensor_id == first)
+    times = sorted(s.end for s in scans if s.sensor_id == first)
 
-    # When each aircraft could be seen, by any sensor.
+    # When each aircraft could be seen, by any of those sensors.
     seen: dict[str, list[datetime]] = {}
-    for scan in simulation.scans:
+    for scan in scans:
         for crossing in scan.opportunities:
             seen.setdefault(crossing.segment_id, []).append(crossing.time)
 

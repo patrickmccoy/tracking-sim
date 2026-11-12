@@ -31,7 +31,12 @@ from stonesoup.models.measurement.nonlinear import _AngleNonLinearGaussianMeasur
 from stonesoup.types.angle import Bearing
 from stonesoup.types.array import StateVector, StateVectors
 
-__all__ = ["CartesianToBearingSlantRange", "bearing_to_compass", "compass_to_bearing"]
+__all__ = [
+    "CartesianToBearingSlantRange",
+    "CartesianToSensorBearing",
+    "bearing_to_compass",
+    "compass_to_bearing",
+]
 
 
 def compass_to_bearing(azimuth: Any) -> Any:
@@ -119,3 +124,54 @@ class CartesianToBearingSlantRange(
     @staticmethod
     def _typed_vector() -> np.ndarray:
         return np.array([[Bearing(0.0)], [0.0]])
+
+
+class CartesianToSensorBearing(  # bearing only, for passive sensors
+    _AngleNonLinearGaussianMeasurement,  # type: ignore[misc]
+):
+    r"""Bearing from a sensor, in its own frame, with Gaussian noise.
+
+    Like ``CartesianToBearingSlantRange`` without the range: the target is
+    moved into the sensor's ENU frame (``translation_offset``,
+    ``frame_rotation``) and the measurement is ``atan2(y', x')``, Stone Soup's
+    bearing convention. Not reversible: one bearing doesn't place a target.
+    """
+
+    translation_offset: StateVector | None = Property(
+        default=None, doc="Sensor position in the scenario frame (3x1). Defaults to the origin."
+    )
+    frame_rotation: np.ndarray | None = Property(
+        default=None, doc="3x3 rotation from the scenario ENU frame to the sensor's."
+    )
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        if self.translation_offset is None:
+            self.translation_offset = StateVector([0.0, 0.0, 0.0])
+        if len(self.mapping) != 3:
+            raise ValueError("mapping must give the x, y and z position indices")
+
+    @property
+    def ndim_meas(self) -> int:
+        return 1
+
+    @property
+    def rotation_matrix(self) -> np.ndarray:
+        if self.frame_rotation is not None:
+            return np.asarray(self.frame_rotation, dtype=float)
+        matrix: np.ndarray = super().rotation_matrix
+        return matrix
+
+    def _function(self, state: Any, noise: Any = False, **kwargs: Any) -> StateVectors:
+        if isinstance(noise, bool) or noise is None:
+            noise = self.rvs(num_samples=state.state_vector.shape[1], **kwargs) if noise else 0
+        xyz = state.state_vector[self.mapping, :] - self.translation_offset
+        local = self.rotation_matrix @ xyz
+        bearing = np.arctan2(
+            np.asarray(local[1, :], dtype=float), np.asarray(local[0, :], dtype=float)
+        )
+        return StateVectors([bearing]) + noise
+
+    @staticmethod
+    def _typed_vector() -> np.ndarray:
+        return np.array([[Bearing(0.0)]])

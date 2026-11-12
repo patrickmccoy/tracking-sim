@@ -19,19 +19,24 @@ detections.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
 from stonesoup.types.detection import Clutter, Detection, TrueDetection
+from stonesoup.types.groundtruth import GroundTruthPath
 
 from tracking_sim.geo import LocalFrame, SensorSite, radar_horizon_visible
 from tracking_sim.geo.terrain import TerrainHorizon
 from tracking_sim.sensors.detection import AircraftClasses
 from tracking_sim.truth.builder import FlightSegment, TruthSet
 from tracking_sim.truth.record import ensure_utc
+
+if TYPE_CHECKING:
+    from tracking_sim.sim.rng import SensorStreams
 
 __all__ = ["GATES", "Crossing", "GroundSensor", "ScanResult"]
 
@@ -162,6 +167,16 @@ class GroundSensor:
     @property
     def expected_false_alarms(self) -> float:
         """Mean number of false alarms per scan."""
+        raise NotImplementedError
+
+    def observe(
+        self,
+        scan: int,
+        crossings: Sequence[Crossing],
+        streams: SensorStreams,
+        paths: Mapping[str, GroundTruthPath],
+    ) -> ScanResult:
+        """Turn one scan's opportunities into detections (subclasses)."""
         raise NotImplementedError
 
     # -- geometry (deterministic) ------------------------------------------

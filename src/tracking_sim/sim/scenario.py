@@ -42,7 +42,12 @@ from tracking_sim.eval.scoring import ScoringGrid, scoring_grid, segment_of
 from tracking_sim.geo import LocalFrame
 from tracking_sim.geo.terrain import ElevationModel, FlatTerrain, SyntheticRidge
 from tracking_sim.sensors.detection import RcsClass, load_aircraft_classes
-from tracking_sim.sensors.spec import RotatingRadar2DSpec, load_sensor_spec, parse_sensor_spec
+from tracking_sim.sensors.spec import (
+    AnySensorSpec,
+    RotatingRadar2DSpec,
+    load_sensor_spec,
+    parse_sensor_spec,
+)
 from tracking_sim.sim.engine import ReplayEngine, SimulationResult
 from tracking_sim.tracking.runner import TrackerRun, detection_batches, run_tracker
 from tracking_sim.tracking.spec import TrackerSpec, load_tracker_spec, parse_tracker_spec
@@ -141,7 +146,7 @@ class Scenario:
 
     spec: ScenarioSpec
     base_dir: Path
-    sensors: list[RotatingRadar2DSpec]
+    sensors: list[AnySensorSpec]
     trackers: list[TrackerSpec]
     _terrain: Any = field(default=None, init=False, repr=False)
 
@@ -339,8 +344,13 @@ def run_scenario(scenario: Scenario) -> ScenarioResult:
         aircraft_classes=scenario.aircraft_classes(),
     )
     simulation = engine.run(start, end)
-    grid = scoring_grid(truth, simulation)
-    batches = detection_batches(simulation.scans)
+    # Trackers take radar detections only: bearing-only sensors need fusion
+    # (milestone 6). They are scored on what the radars could see.
+    radars = [s.id for s in scenario.sensors if isinstance(s, RotatingRadar2DSpec)]
+    if scenario.trackers and not radars:
+        raise ValueError("trackers need at least one rotating_radar_2d sensor")
+    grid = scoring_grid(truth, simulation, sensor_ids=radars)
+    batches = detection_batches([s for s in simulation.scans if s.sensor_id in radars])
     timings["sensors"] = time.perf_counter() - started
     log.info("sensors: %d scans, %.1f s", len(simulation.scans), timings["sensors"])
 

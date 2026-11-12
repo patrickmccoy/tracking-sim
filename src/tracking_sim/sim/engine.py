@@ -37,10 +37,12 @@ from stonesoup.types.groundtruth import GroundTruthPath
 
 from tracking_sim.geo import SensorSite
 from tracking_sim.geo.terrain import ElevationModel, TerrainHorizon
+from tracking_sim.sensors.base import GroundSensor, ScanResult
 from tracking_sim.sensors.detection import AircraftClasses, RcsClass
 from tracking_sim.sensors.measurement import bearing_to_compass
-from tracking_sim.sensors.radar import RotatingRadar2D, ScanResult
-from tracking_sim.sensors.spec import RotatingRadar2DSpec
+from tracking_sim.sensors.passive import PassiveBearingSensor
+from tracking_sim.sensors.radar import RotatingRadar2D
+from tracking_sim.sensors.spec import AnySensorSpec, RotatingRadar2DSpec
 from tracking_sim.sim.rng import sensor_streams
 from tracking_sim.truth.builder import TruthSet
 from tracking_sim.truth.record import ensure_utc
@@ -120,7 +122,7 @@ class SimulationResult:
     seed: int
     start: datetime
     end: datetime
-    radars: dict[str, RotatingRadar2D]
+    radars: dict[str, GroundSensor]  # every sensor, radar or not
     scans: list[ScanResult]
     skipped_segments: dict[str, list[str]] = field(default_factory=dict)
 
@@ -180,9 +182,15 @@ class SimulationResult:
         for d in self.detections():
             meta = d.metadata
             radar = self.radars[meta["sensor_id"]]
-            bearing, slant = float(d.state_vector[0, 0]), float(d.state_vector[1, 0])
+            bearing = float(d.state_vector[0, 0])
+            # Bearing-only sensors measure no range: no PPI position either.
+            slant = float(d.state_vector[1, 0]) if d.state_vector.shape[0] > 1 else None
             az = float(bearing_to_compass(bearing))
-            ppi = radar.site.to_scenario([[slant * math.sin(az), slant * math.cos(az), 0.0]])[0]
+            ppi = (
+                radar.site.to_scenario([[slant * math.sin(az), slant * math.cos(az), 0.0]])[0]
+                if slant is not None
+                else (None, None)
+            )
             is_target = isinstance(d, TrueDetection)
             rows["sensor_id"].append(meta["sensor_id"])
             rows["scan"].append(meta["scan"])
@@ -192,8 +200,8 @@ class SimulationResult:
             rows["bearing_rad"].append(bearing)
             rows["azimuth_deg"].append(math.degrees(az))
             rows["slant_range_m"].append(slant)
-            rows["east_m"].append(float(ppi[0]))
-            rows["north_m"].append(float(ppi[1]))
+            rows["east_m"].append(None if ppi[0] is None else float(ppi[0]))
+            rows["north_m"].append(None if ppi[1] is None else float(ppi[1]))
             rows["segment_id"].append(meta.get("segment_id") if is_target else None)
             rows["icao24"].append(meta.get("icao24") if is_target else None)
             rows["merged"].append(len(meta.get("merged_segment_ids", [])) if is_target else 0)
@@ -298,7 +306,7 @@ class ReplayEngine:
     def __init__(
         self,
         truth: TruthSet,
-        sensors: Sequence[RotatingRadar2DSpec],
+        sensors: Sequence[AnySensorSpec],
         *,
         seed: int,
         truth_step_s: float = 1.0,
@@ -345,7 +353,7 @@ class ReplayEngine:
         streams = [self._sensor_scans(spec, lo, hi) for spec in self.specs]
         yield from heapq.merge(*streams, key=lambda s: (s.end, s.sensor_id))
 
-    def horizon(self, spec: RotatingRadar2DSpec) -> TerrainHorizon | None:
+    def horizon(self, spec: AnySensorSpec) -> TerrainHorizon | None:
         """The sensor's terrain horizon (built once), if there is terrain and it masks."""
         if self.terrain is None or not spec.coverage.terrain_masking:
             return None
@@ -357,21 +365,30 @@ class ReplayEngine:
             )
         return self._horizons[spec.id]
 
-    def _radar(self, spec: RotatingRadar2DSpec, start: datetime) -> RotatingRadar2D:
-        classes = AircraftClasses(self.aircraft_classes, default=spec.detection.default_class)
-        return RotatingRadar2D(
-            spec, self.truth.frame, start, terrain=self.horizon(spec), classes=classes
+    def _radar(self, spec: AnySensorSpec, start: datetime) -> GroundSensor:
+        """The sensor model for ``spec`` (a radar or a passive sensor)."""
+        if isinstance(spec, RotatingRadar2DSpec):
+            classes = AircraftClasses(self.aircraft_classes, default=spec.detection.default_class)
+            return RotatingRadar2D(
+                spec, self.truth.frame, start, terrain=self.horizon(spec), classes=classes
+            )
+        return PassiveBearingSensor(
+            spec,
+            self.truth.frame,
+            start,
+            terrain=self.horizon(spec),
+            classes=AircraftClasses(self.aircraft_classes),
         )
 
-    def _whole_scans(self, spec: RotatingRadar2DSpec, start: datetime, end: datetime) -> int:
-        return int((end - start).total_seconds() // spec.scan.period_s)
+    def _whole_scans(self, sensor: GroundSensor, start: datetime, end: datetime) -> int:
+        return int((end - start).total_seconds() // sensor.period_s + 1e-9)
 
     def _sensor_scans(
-        self, spec: RotatingRadar2DSpec, start: datetime, end: datetime
+        self, spec: AnySensorSpec, start: datetime, end: datetime
     ) -> Iterator[ScanResult]:
         radar = self._radar(spec, start)
-        n_scans = self._whole_scans(spec, start, end)
-        stop = start + timedelta(seconds=n_scans * spec.scan.period_s)
+        n_scans = self._whole_scans(radar, start, end)
+        stop = start + timedelta(seconds=n_scans * radar.period_s)
         crossings, _ = radar.crossings(self.truth, start, stop)
         by_scan: dict[int, list[Any]] = {}
         for c in crossings:

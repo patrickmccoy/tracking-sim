@@ -64,8 +64,6 @@ def test_invalid_specs_fail(change: dict[str, Any]) -> None:
 
 
 def test_planned_types_and_models_point_at_their_milestone() -> None:
-    with pytest.raises(ValueError, match="milestone 4"):
-        parse_sensor_spec(minimal(type="passive_bearing"))
     with pytest.raises(ValueError, match="planned"):
         parse_sensor_spec(minimal(type="radar_3d"))
 
