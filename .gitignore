@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# tracking-sim
+# Local recordings and run outputs stay out of git; the test fixture lives in tests/data/.
+/data/
+/runs/
