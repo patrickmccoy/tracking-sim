@@ -1,0 +1,25 @@
+# A multiple-model particle filter: each particle follows either constant
+# velocity or a coordinated turn and may switch between them, so the
+# tracker can follow manoeuvres. Same association, initiation and deletion
+# as the baseline. Load with tracking_sim.tracking.load_tracker_spec.
+id: pf-mm-gnn
+filter: particle_mm
+motion:
+  model: cv_ct                   # constant velocity + coordinated turn
+  acceleration_noise: 1.0        # m^2/s^3, horizontal
+  vertical_acceleration_noise: 0.1
+  turn_rate_noise_deg: 1.0       # deg^2/s^3
+  switch_probability: 0.05       # per update
+particles:
+  count: 1000                    # per confirmed track
+association:
+  method: gnn
+  gate: 3.0
+initiation:
+  min_points: 3
+  assumed_height_m: 5000
+  height_sigma_m: 3000
+  speed_sigma_mps: 150
+  vertical_speed_sigma_mps: 10
+deletion:
+  missed_scans: 3

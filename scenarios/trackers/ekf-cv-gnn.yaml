@@ -1,0 +1,20 @@
+# The milestone 3 baseline: extended Kalman filter, constant velocity,
+# global nearest neighbour association. Load with
+# tracking_sim.tracking.load_tracker_spec.
+id: ekf-cv-gnn
+filter: ekf                      # ekf, ukf or particle_mm
+motion:
+  model: constant_velocity
+  acceleration_noise: 1.0        # m^2/s^3, horizontal
+  vertical_acceleration_noise: 0.1
+association:
+  method: gnn
+  gate: 3.0                      # Mahalanobis distance
+initiation:
+  min_points: 3                  # associated detections to confirm a track
+  assumed_height_m: 5000         # above the antenna: a 2D radar measures no height
+  height_sigma_m: 3000
+  speed_sigma_mps: 150
+  vertical_speed_sigma_mps: 10
+deletion:
+  missed_scans: 3
