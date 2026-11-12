@@ -1,0 +1,27 @@
+# An example rotating 2D surveillance radar at Rocky Mountain Metropolitan
+# Airport (KBJC). Values are illustrative: roughly a terminal-area radar.
+# Load it with tracking_sim.sensors.load_sensor_spec.
+id: radar-1
+type: rotating_radar_2d
+position: {lat: 39.9088, lon: -105.1172, alt_m: 1729, mast_m: 15}
+coverage:
+  range_min_m: 500
+  range_max_m: 110000
+  azimuth_deg: [0, 360]        # compass sector, clockwise from the first value
+  elevation_deg: [-1, 30]
+  radar_horizon: true          # line of sight on a 4/3 earth
+scan:
+  period_s: 5.0                # one rotation
+  beamwidth_deg: 1.5
+  start_azimuth_deg: 0         # beam points north at the start of the run
+noise:
+  range_sigma_m: 60
+  bearing_sigma_deg: 0.2
+detection:
+  model: constant
+  pd: 0.9
+  false_alarm_density: 1.0e-9  # per square metre per scan (about 38 per scan here)
+resolution:
+  range_m: 150
+  bearing_deg: 1.5
+latency_s: 0.5
