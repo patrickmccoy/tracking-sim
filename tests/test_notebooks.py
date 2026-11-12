@@ -18,6 +18,10 @@ EXPECTED = {
         ["configured 0.9: consistent", "identical = True", "same beam crossings: True"],
         ["NOT consistent"],
     ),
+    "03_tracking.ipynb": (
+        ["trackers: ekf-cv-gnn, ukf-cv-gnn, pf-mm-gnn", "lowest mean OSPA:", "configured 0.900"],
+        [],
+    ),
 }
 
 
@@ -36,6 +40,7 @@ def test_notebook_runs(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "TRACKING_SIM_SBS_TZ",
         "TRACKING_SIM_SENSOR",
         "TRACKING_SIM_SEED",
+        "TRACKING_SIM_SCENARIO",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("MPLBACKEND", "Agg")
