@@ -448,6 +448,7 @@ Conventions, from the design document:
 - The core package must install and pass tests with no extras, no database and no network. The notebook test skips itself when the notebook extra is missing.
 - Package adapters are only for Dump1090-family decoder outputs. Other data sources, such as databases, get an exporter to SBS that lives with that system and follows [tools/README.md](tools/README.md).
 - Every simulation path takes an explicit seed; identical config and seed give identical output.
+- Notebooks are committed without outputs, execution counts or local kernel metadata (outputs can carry local data). Clear outputs before committing, or restore the committed file with `git checkout -- notebooks/<name>.ipynb`; `tests/test_notebook_hygiene.py` fails otherwise.
 - Units are SI internally. Conversion from feet, knots and degrees happens only in the truth builder and config loading.
 - Work one milestone at a time, and keep [PROGRESS.md](PROGRESS.md) and [DECISIONS.md](DECISIONS.md) current at the end of each session.
 
