@@ -160,7 +160,12 @@ class SimulationResult:
             crossings=crossings,
             opportunities=opportunities,
             detected=detected,
-            configured_pd=pd_sum / opportunities if opportunities else float("nan"),
+            # Constant Pd is reported exactly as configured; otherwise the mean expected Pd.
+            configured_pd=(
+                float(radar.spec.detection.pd)
+                if radar.spec.detection.model == "constant"
+                else (pd_sum / opportunities if opportunities else float("nan"))
+            ),
             false_alarms=false_alarms,
             expected_false_alarms_per_scan=radar.expected_false_alarms,
             gated=gated,
