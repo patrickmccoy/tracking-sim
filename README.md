@@ -357,6 +357,8 @@ export TRACKING_SIM_WINDOW=2026-11-01T23:00Z,2026-11-02T00:00Z   # optional
 uv run jupyter lab notebooks/01_truth_playground.ipynb
 ```
 
+The same variables run the later notebooks on your traffic: notebook 02 replays it past the example radar, notebook 03 runs its scenario's sensors and trackers on it, and notebook 04 uses it for the terrain, radar-equation and passive-sensor sections. SBS captures carry no ADS-B emitter category, so in notebook 04 every aircraft gets the default RCS class; record with `record aircraft-json` to keep the category. From the command line, point a copy of a scenario's `truth.path` at the recording instead.
+
 Section 5 compares against a second source for the same hour: another receiver's recording or capture, or an SBS export from another system (below). Without one, the notebook stops there for your own recording.
 
 ```sh
@@ -476,14 +478,14 @@ Nothing site-specific lives in code. Hosts, ports, credentials and locations com
 | --- | --- | --- |
 | `TRACKING_SIM_SBS_HOST` | `record sbs` | Dump1090 host |
 | `TRACKING_SIM_SBS_PORT` | `record sbs` | BaseStation port (default 30003) |
-| `TRACKING_SIM_SBS_TZ` | `record sbs`, `export sbs`, notebook | Time zone of SBS timestamps (default UTC) |
+| `TRACKING_SIM_SBS_TZ` | `record sbs`, `export sbs`, notebooks | Time zone of SBS timestamps (default UTC) |
 | `TRACKING_SIM_RECEIVER` | `record sbs`, `export sbs` | Receiver name; records get `source_id` `sbs:<name>` |
-| `TRACKING_SIM_RECORDING` | notebook | Recording (file, directory or glob) or SBS capture |
+| `TRACKING_SIM_RECORDING` | notebooks 01–04 | Recording (file, directory or glob) or SBS capture, in place of the synthetic hour |
 | `TRACKING_SIM_SECOND` | notebook 01 | Second source for section 5, recording or SBS |
-| `TRACKING_SIM_ORIGIN` | notebook | `LAT,LON[,ALT_M]` of the local frame |
-| `TRACKING_SIM_WINDOW` | notebook 01 | `START,END` in ISO 8601 |
+| `TRACKING_SIM_ORIGIN` | notebooks 01, 02 | `LAT,LON[,ALT_M]` of the local frame |
+| `TRACKING_SIM_WINDOW` | notebooks 01, 03, 04 | `START,END` in ISO 8601, part of the recording |
 | `TRACKING_SIM_SENSOR` | notebook 02 | Sensor spec YAML (default `scenarios/sensors/radar-1.yaml`) |
-| `TRACKING_SIM_SEED` | notebooks 02, 03 | Run seed (notebook 02 default 42; notebook 03 overrides the scenario's) |
+| `TRACKING_SIM_SEED` | notebooks 02–04 | Run seed (default 42; notebook 03 overrides the scenario's) |
 | `TRACKING_SIM_SCENARIO` | notebook 03 | Scenario YAML (default `scenarios/kbjc-synthetic.yaml`) |
 | `TRACKING_SIM_TERRAIN` | notebook 04 | `copernicus` (default) or `synthetic` |
 | `TRACKING_SIM_AIRCRAFT_JSON` | `record aircraft-json` | URL of `aircraft.json` |
