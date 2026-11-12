@@ -19,6 +19,9 @@ dependencies = [
     "stonesoup>=1.9,<1.10",
 ]
 
+[project.scripts]
+tracking-sim = "tracking_sim.cli:main"
+
 [project.optional-dependencies]
 # Read-only access to a planespotter MySQL/Percona database.
 planespotter = ["sqlalchemy>=2.0", "pymysql>=1.1"]
