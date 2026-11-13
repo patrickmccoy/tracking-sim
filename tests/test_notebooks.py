@@ -32,6 +32,22 @@ EXPECTED = {
         ["trackers: ekf-cv-gnn, ukf-cv-gnn, pf-mm-gnn", "lowest mean OSPA:", "configured 0.900"],
         [],
     ),
+    "05_stone_soup_walkthrough.ipynb": (
+        [
+            "EKF: median error",
+            "UKF: median error",
+            "PF: median error",
+            "EKF turn: median error",
+            "PF multiple model: median error",
+            "EKF smoothed: median error",
+            "final scan:",
+            "GNN:",
+            "JPDA:",
+            "MFA: ",
+            "lowest mean OSPA:",
+        ],
+        ["MFA skipped"],
+    ),
 }
 
 
@@ -42,6 +58,7 @@ RELATIVE_PATHS = {
         "TRACKING_SIM_SENSOR": "scenarios/sensors/radar-1.yaml",
     },
     "03_tracking.ipynb": {"TRACKING_SIM_SCENARIO": "scenarios/kbjc-synthetic.yaml"},
+    "05_stone_soup_walkthrough.ipynb": {"TRACKING_SIM_SENSOR": "scenarios/sensors/radar-1.yaml"},
 }
 
 
@@ -61,6 +78,9 @@ def test_notebook_runs(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "TRACKING_SIM_SENSOR",
         "TRACKING_SIM_SEED",
         "TRACKING_SIM_SCENARIO",
+        "TRACKING_SIM_RUN",
+        "TRACKING_SIM_RUNS",
+        "TRACKING_SIM_AIRCRAFT",
     ):
         monkeypatch.delenv(name, raising=False)
     # Relative paths are from the repository root, not the notebooks directory
