@@ -54,7 +54,14 @@ from tracking_sim.tracking.spec import TrackerSpec, load_tracker_spec, parse_tra
 from tracking_sim.truth.builder import TruthBuilderConfig, TruthSet, build_truth
 from tracking_sim.truth.record import ensure_utc
 
-__all__ = ["Scenario", "ScenarioResult", "ScenarioSpec", "load_scenario", "run_scenario"]
+__all__ = [
+    "Scenario",
+    "ScenarioResult",
+    "ScenarioSpec",
+    "load_scenario",
+    "load_truth",
+    "run_scenario",
+]
 
 log = logging.getLogger(__name__)
 
@@ -344,7 +351,8 @@ class ScenarioResult:
         return out
 
 
-def _load_truth(scenario: Scenario) -> TruthSet:
+def load_truth(scenario: Scenario) -> TruthSet:
+    """The scenario's truth: its file, over its window, in its frame."""
     from tracking_sim.truth.sources.recording import RecordingSource
     from tracking_sim.truth.sources.sbs import SbsSource
 
@@ -363,7 +371,7 @@ def run_scenario(scenario: Scenario) -> ScenarioResult:
     """Build truth, simulate the sensors once, run and score every tracker."""
     timings: dict[str, float] = {}
     started = time.perf_counter()
-    truth = _load_truth(scenario)
+    truth = load_truth(scenario)
     timings["truth"] = time.perf_counter() - started
 
     started = time.perf_counter()

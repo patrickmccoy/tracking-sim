@@ -372,6 +372,20 @@ class ReplayEngine:
             )
         return self._horizons[spec.id]
 
+    def sensor(self, spec: AnySensorSpec, start: datetime) -> GroundSensor:
+        """The sensor model for ``spec``, its scan clock starting at ``start``.
+
+        This is the object that measures: its ``measurement_model`` is the
+        one its detections carry.
+        """
+        return self._radar(spec, ensure_utc(start))
+
+    def window(
+        self, start: datetime | None = None, end: datetime | None = None
+    ) -> tuple[datetime, datetime]:
+        """The run window: ``start`` and ``end``, or the truth's span where missing."""
+        return self._window(start, end)
+
     def _radar(self, spec: AnySensorSpec, start: datetime) -> GroundSensor:
         """The sensor model for ``spec`` (a radar or a passive sensor)."""
         if isinstance(spec, RotatingRadar2DSpec):

@@ -112,7 +112,7 @@ def test_terrain_example_scenario_loads() -> None:
 def test_with_truth_swaps_in_a_capture(small_scenario: Path, tmp_path: Path) -> None:
     from datetime import UTC, datetime
 
-    from tracking_sim.sim.scenario import _load_truth
+    from tracking_sim.sim.scenario import load_truth
     from tracking_sim.truth.sources import is_sbs_capture, open_recording
     from tracking_sim.truth.sources.recording import RecordingSource
     from tracking_sim.truth.sources.sbs import SbsSource
@@ -130,7 +130,7 @@ def test_with_truth_swaps_in_a_capture(small_scenario: Path, tmp_path: Path) -> 
     assert capture.truth_path == sbs.resolve() and capture.sensors == scenario.sensors
     assert capture.spec.seed == scenario.spec.seed
     assert capture.input_digests()["truth"] != scenario.input_digests()["truth"]
-    assert len(_load_truth(capture)) > 0
+    assert len(load_truth(capture)) > 0
 
     window = (datetime(2026, 11, 1, 23, 1, tzinfo=UTC), datetime(2026, 11, 1, 23, 2, tzinfo=UTC))
     assert scenario.with_truth(sbs, window=window).spec.truth.window == window
