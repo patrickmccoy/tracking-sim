@@ -313,7 +313,7 @@ Stone Soup components assembled by hand, one step at a time like Stone Soup's ow
 3. Transition and measurement models, and the prior from one detection at an assumed height.
 4. An extended Kalman filter, its error against its own 2-sigma, and what happens when height is left free (a 2D radar cannot see it).
 5. An unscented Kalman filter.
-6. A particle filter, warm-started from the EKF.
+6. A particle filter, warm-started from the EKF, and why it needs more process noise than the Kalman filters (its particle cloud collapses in a turn otherwise).
 7. Motion models: constant acceleration, Singer, coordinated turn (EKF and UKF) and a multiple-model particle filter.
 8. Rauch-Tung-Striebel smoothing of finished tracks.
 9. A replay player: pick any aircraft, then play or scrub through its truth, its detections, the other detections of each scan, and every filter's track and error.

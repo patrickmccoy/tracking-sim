@@ -299,6 +299,12 @@ notebook test uses, and on the roof capture, both simulated
 (`TRACKING_SIM_RUN`). On the capture, 41 aircraft fall within 40 km of the
 chosen one, and every association method takes 1-2 s on that subset.
 
+Follow-up: the particle filters sometimes veered kilometres off course.
+Their particles collapsed in turns with the Kalman filters' process noise;
+they now use their own, `PF_Q = 50` (D31). The `pf-mm-gnn` tracker spec
+uses 1.0 and probably suffers the same way; not changed yet, since that
+changes the scenario's results.
+
 ## Next: milestone 5, map playground
 
 From the design: a FastAPI service over scenarios and runs; a map UI to

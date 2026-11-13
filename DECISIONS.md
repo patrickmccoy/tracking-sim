@@ -445,6 +445,19 @@ Things found while building it, reflected in its defaults:
 - **Particle filters** start from the EKF after three detections, as the
   particle tracker does. Sampled from one detection's prior they sometimes
   lose the aircraft.
+- **Particle process noise.** The particle filters use their own
+  horizontal noise, `PF_Q = 50`, not the Kalman filters' 5. At 5 the
+  particles spread less per scan than the radar's noise; in a turn the
+  cloud collapses onto one particle (ESS 1) and, having no spread left,
+  never catches up. On the roof capture that lost 13 of 112 aircraft
+  (error above 3 km) for the PF and 8 for the multiple-model PF, against
+  3 and 2 at 50. More particles barely helped (9 lost with 5,000), and
+  Stone Soup's `KalmanProposal` failed on this data (its posterior
+  covariance is not quite symmetric) and costs a Kalman update per
+  particle. MCMC regularisation moves particles by the cloud's own spread,
+  which is zero once it has collapsed. The aircraft every filter still
+  loses are slow ones flying near the antenna's height, where the assumed
+  5,000 m height is badly wrong.
 - **Turn-rate noise** of 1 deg^2/s^3 lets the coordinated-turn EKF's turn
   rate run away on a manoeuvring aircraft. The default is 0.1.
 - **Gate.** PDA's gate is set at 0.999999 (about 5.3 sigma). At 0.9999 a
