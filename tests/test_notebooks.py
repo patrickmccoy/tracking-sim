@@ -37,6 +37,7 @@ EXPECTED = {
             "EKF: median error",
             "UKF: median error",
             "PF: median error",
+            "PF with Q = 50: median error",
             "EKF turn: median error",
             "PF multiple model: median error",
             "EKF smoothed: median error",
