@@ -209,3 +209,33 @@ def test_detection_adapter_fits_a_constant_acceleration_state() -> None:
     )
     with pytest.raises(TypeError):
         remap_model(object(), 9, (0, 3, 6))  # type: ignore[arg-type]
+
+
+def test_pre_gate_takes_a_track_or_a_bare_state() -> None:
+    from stonesoup.hypothesiser.distance import DistanceHypothesiser
+    from stonesoup.measures import Mahalanobis
+    from stonesoup.types.state import GaussianState
+    from stonesoup.types.track import Track
+    from stonesoup.updater.kalman import ExtendedKalmanUpdater
+
+    from tracking_sim.tracking.gating import PreGatedHypothesiser
+
+    m = model()
+    pipe = build_tracker(tracker_spec("ekf-cv-gnn"))
+    gate = PreGatedHypothesiser(
+        hypothesiser=DistanceHypothesiser(
+            pipe.predictor, ExtendedKalmanUpdater(None), Mahalanobis(), missed_distance=3
+        ),
+        position_mapping=(0, 2, 4),
+        velocity_mapping=(1, 3, 5),
+    )
+    state = GaussianState(
+        np.array([[0.0], [0], [50_000.0], [0], [5000.0], [0]]),
+        np.diag([1e4, 100, 1e4, 100, 1e4, 1]),
+        timestamp=EPOCH,
+    )
+    near = Detection(np.array([[np.pi / 2], [50_250.0]]), timestamp=EPOCH, measurement_model=m)
+    far = Detection(np.array([[0.0], [50_000.0]]), timestamp=EPOCH, measurement_model=m)
+    # Multi-frame assignment hypothesises per mixture component: a bare state, no track.
+    assert gate.candidates(state, [near, far]) == {near}
+    assert gate.candidates(Track([state]), [near, far]) == {near}

@@ -46,7 +46,8 @@ class PreGatedHypothesiser(Hypothesiser):  # type: ignore[misc]
         detections = list(detections)
         if not detections:
             return set()
-        state = track.state
+        # A track, or a bare state (multi-frame assignment hypothesises per mixture component).
+        state = getattr(track, "state", track)
         mean = np.asarray(state.mean, dtype=float).ravel()
         pos = mean[list(self.position_mapping)]
         vel = mean[list(self.velocity_mapping)]
