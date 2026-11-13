@@ -25,6 +25,7 @@ internal layout; metrics then measure horizontal position (x, y).
 from __future__ import annotations
 
 from bisect import bisect_right
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -37,7 +38,7 @@ from tracking_sim.sim.engine import SimulationResult
 from tracking_sim.tracking.runner import TrackerRun
 from tracking_sim.truth.builder import TruthSet
 
-__all__ = ["ScoringGrid", "scoring_grid", "segment_of"]
+__all__ = ["ScoringGrid", "grid_from_looks", "scoring_grid", "segment_of"]
 
 
 def segment_of(truth_id: str) -> str:
@@ -59,18 +60,34 @@ class ScoringGrid:
 
     def tracks(self, run: TrackerRun) -> list[Track]:
         """``run``'s reported tracks sampled on the grid, as 6D states."""
-        px, py, pz = run.position_mapping
-        vx, vy, vz = run.velocity_mapping
+        return self.sample(run.reported_tracks(), run.position_mapping, run.velocity_mapping)
+
+    def sample(
+        self,
+        tracks: Sequence[Track],
+        position_mapping: tuple[int, int, int] = (0, 2, 4),
+        velocity_mapping: tuple[int, int, int] = (1, 3, 5),
+    ) -> list[Track]:
+        """Any Stone Soup tracks sampled on the grid, as 6D states.
+
+        The mappings say where position and velocity sit in the tracks'
+        states (default: the 6D ``[x, vx, y, vy, z, vz]`` layout).
+        """
+        px, py, pz = position_mapping
+        vx, vy, vz = velocity_mapping
         out = []
-        for track in run.reported_tracks():
+        for track in tracks:
             states = track.states
+            if not states:
+                continue
             stamps = [s.timestamp for s in states]
             grid_states = []
             for t in self.times:
                 if t < stamps[0] or t > stamps[-1]:
                     continue
                 state = states[bisect_right(stamps, t) - 1]
-                mean = np.asarray(state.mean, dtype=float).ravel()
+                # Particle states hold every particle; their mean is the estimate.
+                mean = np.asarray(getattr(state, "mean", state.state_vector), dtype=float).ravel()
                 dt = (t - state.timestamp).total_seconds()
                 pos = mean[[px, py, pz]] + dt * mean[[vx, vy, vz]]
                 vel = mean[[vx, vy, vz]]
@@ -93,8 +110,7 @@ def scoring_grid(
     if not scans:
         raise ValueError("the simulation has no scans from those sensors")
     first = sensor_ids[0] if sensor_ids else scans[0].sensor_id
-    radar = simulation.radars[first]
-    period = radar.period_s
+    period = simulation.radars[first].period_s
     times = sorted(s.end for s in scans if s.sensor_id == first)
 
     # When each aircraft could be seen, by any of those sensors.
@@ -102,11 +118,26 @@ def scoring_grid(
     for scan in scans:
         for crossing in scan.opportunities:
             seen.setdefault(crossing.segment_id, []).append(crossing.time)
+    return grid_from_looks(truth, times, period, seen)
 
-    window = timedelta(seconds=period)
+
+def grid_from_looks(
+    truth: TruthSet,
+    times: Sequence[datetime],
+    period_s: float,
+    looks: Mapping[str, Sequence[datetime]],
+) -> ScoringGrid:
+    """The grid at ``times`` (scan ends), from when each aircraft could be seen.
+
+    ``looks`` maps segment ids to the times of their detection
+    opportunities; an aircraft counts at a grid time if it had one in the
+    scan ending then (``period_s`` long).
+    """
+    times = sorted(times)
+    window = timedelta(seconds=period_s)
     truths = []
-    for segment_id in sorted(seen):
-        crossings = sorted(seen[segment_id])
+    for segment_id in sorted(looks):
+        crossings = sorted(looks[segment_id])
         visible = [
             t
             for t in times
@@ -135,4 +166,4 @@ def scoring_grid(
         if stretch:
             number += 1
             truths.append(GroundTruthPath(stretch, id=f"{segment_id}#{number}"))
-    return ScoringGrid(times=times, truths=truths, period_s=period)
+    return ScoringGrid(times=list(times), truths=truths, period_s=period_s)

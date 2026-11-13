@@ -76,3 +76,36 @@ def test_tracks_on_the_grid_extrapolate_the_latest_state(truth: TruthSet) -> Non
         assert sv[0] == pytest.approx(mean[0] + dt * mean[1])
         assert sv[2] == pytest.approx(mean[2] + dt * mean[3])
         assert sv[4] == pytest.approx(mean[5] + dt * mean[6])
+
+
+def test_grid_from_looks_matches_the_simulation(truth: TruthSet) -> None:
+    from tracking_sim.eval.scoring import grid_from_looks
+
+    radar = load_sensor_spec(ROOT / "scenarios/sensors/radar-1.yaml")
+    sim = ReplayEngine(truth, [radar], seed=1).run(START, END)
+    grid = scoring_grid(truth, sim)
+    looks: dict[str, list[datetime]] = {}
+    for scan in sim.scans:
+        for c in scan.opportunities:
+            looks.setdefault(c.segment_id, []).append(c.time)
+    again = grid_from_looks(truth, [s.end for s in sim.scans], 5.0, looks)
+    assert again.times == grid.times
+    assert [p.id for p in again.truths] == [p.id for p in grid.truths]
+    assert [len(p.states) for p in again.truths] == [len(p.states) for p in grid.truths]
+    # Plain Stone Soup tracks sample the same way as a tracker run's.
+    path = truth.segment(segment_of(grid.truths[0].id))
+    t = [grid.times[0] - timedelta(seconds=7), grid.times[0] + timedelta(seconds=3)]
+    from stonesoup.types.state import State
+    from stonesoup.types.track import Track
+
+    pos, vel, _ = path.evaluate(t)
+    states = [
+        State(np.array([p[0], v[0], p[1], v[1], p[2], v[2]]).reshape(6, 1), timestamp=ti)
+        for ti, p, v in zip(t, pos, vel, strict=True)
+    ]
+    (sampled,) = grid.sample([Track(states, id="x"), Track([], id="empty")])
+    assert sampled.states[0].timestamp == grid.times[0]
+    expected = pos[0] + 7 * vel[0]
+    assert np.asarray(sampled.states[0].state_vector, dtype=float).ravel()[[0, 2, 4]] == (
+        pytest.approx(expected)
+    )
