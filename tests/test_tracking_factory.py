@@ -182,3 +182,30 @@ def test_every_tracker_follows_aircraft(
     longest = max(long_tracks, key=len)
     if name == "pf-mm-gnn":
         assert isinstance(longest.state, MultiModelParticleState)
+
+
+def test_detection_adapter_fits_a_constant_acceleration_state() -> None:
+    from stonesoup.types.detection import TrueDetection
+
+    from tracking_sim.tracking.adapt import DetectionAdapter, remap_model
+
+    m = model()
+    det = TrueDetection(
+        np.array([[0.3], [50_000.0]]),
+        timestamp=EPOCH,
+        measurement_model=m,
+        groundtruth_path=None,
+        metadata={"segment_id": "a"},
+    )
+    assert DetectionAdapter(6, (0, 2, 4))([det]) == {det}
+    adapter = DetectionAdapter(9, (0, 3, 6))
+    copy = adapter.one(det)
+    assert isinstance(copy, TrueDetection) and copy.metadata["segment_id"] == "a"
+    assert adapter.one(det) is copy and adapter.model_for(m) is copy.measurement_model
+    x6 = State(np.array([[1e4], [0], [2e4], [0], [3e3], [0]]))
+    x9 = State(np.array([[1e4], [0], [0], [2e4], [0], [0], [3e3], [0], [0]]))
+    assert np.asarray(copy.measurement_model.function(x9), dtype=float) == pytest.approx(
+        np.asarray(m.function(x6), dtype=float)
+    )
+    with pytest.raises(TypeError):
+        remap_model(object(), 9, (0, 3, 6))  # type: ignore[arg-type]

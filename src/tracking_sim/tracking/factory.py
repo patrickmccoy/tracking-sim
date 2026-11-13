@@ -21,7 +21,8 @@ extended Kalman filter with the same motion model, and are confirmed after
 ``min_points`` updates. The particle tracker samples particles only then.
 
 Detections carry the 6D slant-range model the sensor built. A 7D tracker
-needs the same model mapped to its own state, which ``adapt`` provides.
+needs the same model mapped to its own state, which ``adapt`` provides
+(``tracking.adapt.DetectionAdapter``).
 """
 
 from __future__ import annotations
@@ -47,11 +48,11 @@ from stonesoup.predictor.kalman import ExtendedKalmanPredictor, UnscentedKalmanP
 from stonesoup.resampler.particle import ESSResampler
 from stonesoup.tracker.simple import MultiTargetTracker
 from stonesoup.types.array import CovarianceMatrix, StateVector
-from stonesoup.types.detection import Clutter, Detection, TrueDetection
+from stonesoup.types.detection import Detection
 from stonesoup.types.state import GaussianState
 from stonesoup.updater.kalman import ExtendedKalmanUpdater, UnscentedKalmanUpdater
 
-from tracking_sim.sensors.measurement import CartesianToBearingSlantRange
+from tracking_sim.tracking.adapt import DetectionAdapter
 from tracking_sim.tracking.gating import PreGatedHypothesiser
 from tracking_sim.tracking.initiators import ParticleConvertingInitiator, SlantRangeInitiator
 from tracking_sim.tracking.particle import (
@@ -89,9 +90,7 @@ class TrackerPipeline:
     deleter: Any
     position_mapping: tuple[int, int, int]
     velocity_mapping: tuple[int, int, int]
-    _models: dict[int, Any] = field(default_factory=dict, repr=False)
-    # id(original) -> (original, copy); holding the original keeps its id unique.
-    _detections: dict[int, tuple[Detection, Detection]] = field(default_factory=dict, repr=False)
+    _adapter: DetectionAdapter | None = field(default=None, repr=False)
 
     @property
     def ndim_state(self) -> int:
@@ -115,55 +114,9 @@ class TrackerPipeline:
         to (0, 2, 5); copies are cached, so the same input gives the same
         object every time.
         """
-        if self.position_mapping == LAYOUT_6D.position:
-            return set(detections)
-        return {self._adapt_one(d) for d in detections}
-
-    def _adapt_one(self, detection: Detection) -> Detection:
-        cached = self._detections.get(id(detection))
-        if cached is not None:
-            return cached[1]
-        model = self._model_for(detection.measurement_model)
-        if isinstance(detection, TrueDetection):
-            copy: Detection = TrueDetection(
-                state_vector=detection.state_vector,
-                timestamp=detection.timestamp,
-                measurement_model=model,
-                groundtruth_path=detection.groundtruth_path,
-                metadata=detection.metadata,
-            )
-        elif isinstance(detection, Clutter):
-            copy = Clutter(
-                state_vector=detection.state_vector,
-                timestamp=detection.timestamp,
-                measurement_model=model,
-                metadata=detection.metadata,
-            )
-        else:
-            copy = Detection(
-                state_vector=detection.state_vector,
-                timestamp=detection.timestamp,
-                measurement_model=model,
-                metadata=detection.metadata,
-            )
-        self._detections[id(detection)] = (detection, copy)
-        return copy
-
-    def _model_for(self, model: Any) -> Any:
-        cached = self._models.get(id(model))
-        if cached is None:
-            if not isinstance(model, CartesianToBearingSlantRange):
-                raise TypeError(f"can't map a {type(model).__name__} to a 7D state")
-            cached = CartesianToBearingSlantRange(
-                ndim_state=self.ndim_state,
-                mapping=self.position_mapping,
-                noise_covar=model.covar(),
-                translation_offset=model.translation_offset,
-                frame_rotation=model.rotation_matrix,
-                inverse_height_m=model.inverse_height_m,
-            )
-            self._models[id(model)] = cached
-        return cached
+        if self._adapter is None:
+            self._adapter = DetectionAdapter(self.ndim_state, self.position_mapping)
+        return self._adapter(detections)
 
 
 def _cv(spec: TrackerSpec) -> CombinedLinearGaussianTransitionModel:
