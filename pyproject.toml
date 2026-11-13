@@ -25,8 +25,17 @@ tracking-sim = "tracking_sim.cli:main"
 [project.optional-dependencies]
 # Terrain masking from Copernicus DEM tiles (GeoTIFF with a floating-point predictor).
 terrain = ["tifffile>=2024.1", "imagecodecs>=2024.1"]
-# Running and plotting from the notebooks.
-notebook = ["jupyterlab>=4.2", "matplotlib>=3.8", "pandas>=2.2", "nbclient>=0.10", "ipykernel>=6.29"]
+# Running and plotting from the notebooks. ipywidgets drives the replay player;
+# ortools is what Stone Soup's multi-frame assignment (MFA) solves with.
+notebook = [
+    "jupyterlab>=4.2",
+    "matplotlib>=3.8",
+    "pandas>=2.2",
+    "nbclient>=0.10",
+    "ipykernel>=6.29",
+    "ipywidgets>=8.1",
+    "ortools>=9.10",
+]
 
 [dependency-groups]
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "types-pyyaml>=6.0"]
@@ -66,5 +75,15 @@ warn_unreachable = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["stonesoup.*", "pymap3d.*", "pyarrow.*", "scipy.*", "tifffile.*", "imagecodecs.*"]
+module = [
+    "stonesoup.*",
+    "pymap3d.*",
+    "pyarrow.*",
+    "scipy.*",
+    "tifffile.*",
+    "imagecodecs.*",
+    "ipywidgets.*",
+    "IPython.*",
+    "matplotlib.*",
+]
 ignore_missing_imports = true
