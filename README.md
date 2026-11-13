@@ -4,7 +4,7 @@ Sensor and tracking simulation playground: replay real ADS-B traffic from Dump10
 
 You define a sensor (range, accuracy, scan rate, detection probability), place it on the map, and replay traffic past it. The output is detections, tracks, and scores against truth, so different filters can be compared on identical traffic.
 
-> **Status: milestones 1 to 4 are implemented.** Truth comes from Dump1090 SBS or readsb/dump1090-fa `aircraft.json`; a simulated rotating 2D radar turns an hour of traffic into realistic detections (noise, slant range, radar-equation Pd by aircraft size, unresolved targets, clutter, terrain masking from real elevation data); a passive bearing-only sensor runs alongside; three Stone Soup trackers (EKF, UKF, multiple-model particle filter) are scored with OSPA, GOSPA and SIAP; and every run is stored once in an immutable run store. The map UI comes in milestone 5. See [PROGRESS.md](PROGRESS.md) for exactly what is done and what is next.
+> **Status: milestones 1 to 4 are implemented.** Truth comes from Dump1090 SBS or readsb/dump1090-fa `aircraft.json`; a simulated rotating 2D radar turns an hour of traffic into realistic detections (noise, slant range, radar-equation Pd by aircraft size, unresolved targets, clutter, terrain masking from real elevation data); a passive bearing-only sensor runs alongside; three Stone Soup trackers (EKF, UKF, multiple-model particle filter) are scored with OSPA, GOSPA and SIAP; every run is stored once in an immutable run store; and a walkthrough notebook builds Stone Soup filters, motion models and data association (NN, GNN, PDA, JPDA, MFA) step by step on the same data, with a replay player for any aircraft. The map UI comes in milestone 5. See [PROGRESS.md](PROGRESS.md) for exactly what is done and what is next.
 
 - [How it works](#how-it-works)
 - [Getting started](#getting-started)
@@ -199,18 +199,22 @@ src/tracking_sim/
     rng.py               # per-sensor, per-purpose random streams from the run seed
     engine.py            # ReplayEngine and SimulationResult (stats, tables, Parquet)
     scenario.py          # scenario files, run_scenario, ScenarioResult.write
+    dataset.py           # TrackingData: truth + one radar's detections, simulated or from a stored run
   tracking/
     spec.py              # TrackerSpec: Pydantic models loaded from YAML
     factory.py           # Stone Soup components from a spec (EKF, UKF, particle MM)
     initiators.py        # slant-range initiation at an assumed height; particles on confirmation
     particle.py          # reproducible multiple-model particle filter components
     gating.py            # geometric pre-gate in front of Stone Soup's hypothesiser
+    adapt.py             # detections remapped for other state layouts (acceleration, turn rate)
     runner.py            # detection batches, run_tracker, tracks to Parquet
   eval/
     scoring.py           # truth and tracks on a common grid, coverage-only truth
     metrics.py           # OSPA, GOSPA, SIAP, latency, comparison table
     runstore.py          # the immutable run store
-notebooks/               # 01_truth_playground, 02_one_sensor, 03_tracking, 04_scenarios_and_terrain
+  viz/replay.py          # single-aircraft replay: map, errors, ipywidgets player
+notebooks/               # 01_truth_playground, 02_one_sensor, 03_tracking, 04_scenarios_and_terrain,
+                         # 05_stone_soup_walkthrough
 scenarios/               # kbjc-synthetic.yaml, kbjc-terrain.yaml; sensors/ and trackers/ specs
 tools/README.md          # the SBS contract for exporters from other systems
 scripts/make_fixture.py  # regenerates tests/data
@@ -242,7 +246,7 @@ cd tracking-sim
 uv sync --extra notebook --extra terrain
 ```
 
-This creates `.venv/` with the package, its pinned dependencies (from `uv.lock`), Jupyter, matplotlib and pandas, and the GeoTIFF readers for terrain tiles. (`--extra terrain` is optional: without it, notebook 04 uses a synthetic ridge.)
+This creates `.venv/` with the package, its pinned dependencies (from `uv.lock`), Jupyter, matplotlib, pandas, ipywidgets and OR-Tools (for Stone Soup's multi-frame assignment), and the GeoTIFF readers for terrain tiles. (`--extra terrain` is optional: without it, notebook 04 uses a synthetic ridge.)
 
 **3. Open the notebooks:**
 
@@ -299,6 +303,24 @@ It downloads (once, about 57 MB) real terrain for the Front Range, or uses a syn
 4. Radar-equation Pd by range and aircraft size class, against the model.
 5. The passive sensor's bearings over time.
 6. The run store reusing an identical run and storing a new one for another seed.
+
+#### Notebook 05: Stone Soup walkthrough
+
+Stone Soup components assembled by hand, one step at a time like Stone Soup's own tutorials, on this project's truth and radar detections. Each step starts with a short parameters cell: change a value and re-run from there. It runs in about ten seconds on the synthetic hour:
+
+1. The data: simulated now (optionally with changes to the radar spec), or a stored run's exact detections with `TRACKING_SIM_RUN=<run id>`.
+2. One aircraft (the most detected by default, or `TRACKING_SIM_AIRCRAFT`): its detections over truth and the radar's measurement errors.
+3. Transition and measurement models, and the prior from one detection at an assumed height.
+4. An extended Kalman filter, its error against its own 2-sigma, and what happens when height is left free (a 2D radar cannot see it).
+5. An unscented Kalman filter.
+6. A particle filter, warm-started from the EKF.
+7. Motion models: constant acceleration, Singer, coordinated turn (EKF and UKF) and a multiple-model particle filter.
+8. Rauch-Tung-Striebel smoothing of finished tracks.
+9. A replay player: pick any aircraft, then play or scrub through its truth, its detections, the other detections of each scan, and every filter's track and error.
+10. Many aircraft: nearest neighbour and global nearest neighbour, with initiation and deletion, on a subset of scans near the chosen aircraft.
+11. PDA and JPDA.
+12. Multi-frame assignment (MFA).
+13. Every tracker, and a loaded run's own trackers, compared with OSPA, GOSPA and SIAP, then replayed on the chosen aircraft.
 
 If you prefer VS Code or another editor, open the notebook there and choose the `.venv` interpreter in the repo as the kernel.
 
@@ -460,6 +482,21 @@ result.write("runs/kbjc")  # everything --out writes
 
 Or piece by piece: `tracking_sim.tracking.runner.run_tracker(spec, detection_batches(simulation.scans), seed=...)`, then `tracking_sim.eval.scoring_grid(truth, simulation)` and `score_run(run, grid)`.
 
+To build Stone Soup trackers yourself, as notebook 05 does, start from `TrackingData`: truth plus one radar's detections, scan by scan, from a fresh simulation or read back from a stored run:
+
+```python
+from tracking_sim.sim.dataset import load_run, simulate
+
+data = simulate(truth, spec, seed=42)   # or load_run("kbjc-synthetic-1a2b", store="runs")
+data.batches()                          # (scan end, detections) for a Stone Soup tracker
+data.detections_of("ac5044-0")          # one aircraft's TrueDetections
+data.aircraft()                         # per-aircraft table: detections, speed, height, turn rate
+part = data.subset(start, end, around="ac5044-0", radius_m=40_000)  # smaller, for JPDA or MFA
+part.score("my tracker", tracks)        # OSPA, GOSPA and SIAP for any Stone Soup tracks
+```
+
+`tracking_sim.viz.replay.Replay(data, segment_id, estimates).widget()` replays one aircraft with any tracks (needs the `notebook` extra).
+
 To generate synthetic traffic for experiments (any origin, any seed):
 
 ```python
@@ -480,16 +517,18 @@ Nothing site-specific lives in code. Hosts, ports, credentials and locations com
 | `TRACKING_SIM_SBS_PORT` | `record sbs` | BaseStation port (default 30003) |
 | `TRACKING_SIM_SBS_TZ` | `record sbs`, `export sbs`, notebooks | Time zone of SBS timestamps (default UTC) |
 | `TRACKING_SIM_RECEIVER` | `record sbs`, `export sbs` | Receiver name; records get `source_id` `sbs:<name>` |
-| `TRACKING_SIM_RECORDING` | notebooks 01–04 | Recording (file, directory or glob) or SBS capture, in place of the synthetic hour |
+| `TRACKING_SIM_RECORDING` | notebooks 01–05 | Recording (file, directory or glob) or SBS capture, in place of the synthetic hour |
 | `TRACKING_SIM_SECOND` | notebook 01 | Second source for section 5, recording or SBS |
 | `TRACKING_SIM_ORIGIN` | notebooks 01, 02 | `LAT,LON[,ALT_M]` of the local frame |
-| `TRACKING_SIM_WINDOW` | notebooks 01, 03, 04 | `START,END` in ISO 8601, part of the recording |
-| `TRACKING_SIM_SENSOR` | notebook 02 | Sensor spec YAML (default `scenarios/sensors/radar-1.yaml`) |
-| `TRACKING_SIM_SEED` | notebooks 02–04 | Run seed (default 42; notebook 03 overrides the scenario's) |
+| `TRACKING_SIM_WINDOW` | notebooks 01, 03–05 | `START,END` in ISO 8601, part of the recording |
+| `TRACKING_SIM_SENSOR` | notebooks 02, 05 | Sensor spec YAML (default `scenarios/sensors/radar-1.yaml`) |
+| `TRACKING_SIM_SEED` | notebooks 02–05 | Run seed (default 42; notebook 03 overrides the scenario's) |
+| `TRACKING_SIM_RUN` | notebook 05 | A stored run's id or prefix, to load its detections instead of simulating |
+| `TRACKING_SIM_AIRCRAFT` | notebook 05 | Segment id of the aircraft to follow (default: the most detected) |
 | `TRACKING_SIM_SCENARIO` | notebook 03 | Scenario YAML (default `scenarios/kbjc-synthetic.yaml`) |
 | `TRACKING_SIM_TERRAIN` | notebook 04 | `copernicus` (default) or `synthetic` |
 | `TRACKING_SIM_AIRCRAFT_JSON` | `record aircraft-json` | URL of `aircraft.json` |
-| `TRACKING_SIM_RUNS` | `run`, `runs` | Run store directory (default `runs`) |
+| `TRACKING_SIM_RUNS` | `run`, `runs`, notebook 05 | Run store directory (default `runs`) |
 | `TRACKING_SIM_CACHE` | terrain | Download cache (default `~/.cache/tracking-sim`) |
 
 Sensors, trackers and scenarios are YAML files (above; every field is validated, `${VAR}` references are expanded, and scenario paths are relative to the scenario file). Truth builder settings live in `TruthBuilderConfig` (a Pydantic model): segment gap, speed gate, default truth sigma, altitude preference, smoothing method, and whether to drop aircraft on the ground.

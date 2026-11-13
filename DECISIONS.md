@@ -413,3 +413,56 @@ Synthetic receivers can report each flight's emitter category
 (`report_category`), derived from its kind and a CRC of its ICAO address,
 not from the random generator, so the committed fixture and every number
 measured on it are unchanged.
+
+## D31. The Stone Soup walkthrough notebook
+
+Notebook 05 builds Stone Soup trackers by hand, in the style of Stone
+Soup's tutorials, rather than from tracker specs: the point is to see and
+change each component. Choices made with the user:
+
+- **Controls.** Each step has a plain parameters cell (edit, re-run from
+  there; reproducible and testable). Only the single-aircraft replay is a
+  widget (ipywidgets: aircraft picker, play, scan slider), because
+  scrubbing through time is what a widget is for.
+- **Data.** Simulated by default; `TRACKING_SIM_RUN` loads a stored run.
+  Loading reads the run's detections table back into Stone Soup detections
+  with the radar's measurement model, rather than simulating again, so the
+  detections are exactly what the run's trackers saw even if the simulator
+  has changed since. The truth file is checked against the run's digest.
+- **Scope.** EKF, UKF, particle filter; constant acceleration, Singer,
+  coordinated turn and multiple-model motion; RTS smoothing; NN, GNN, PDA,
+  JPDA and MFA.
+
+Things found while building it, reflected in its defaults:
+
+- **Height.** A 2D radar can't see height. With the trackers' vertical
+  settings (noise 0.1, vertical speed spread 10 m/s), a single-target EKF
+  on a low aircraft explains slant-range error by moving height, and its
+  ground position drifts by kilometres. The walkthrough uses 0.01 and
+  1 m/s, and shows the looser case as a lesson. Constant-acceleration and
+  Singer models keep constant velocity vertically; vertical acceleration is
+  unobservable and diverges.
+- **Particle filters** start from the EKF after three detections, as the
+  particle tracker does. Sampled from one detection's prior they sometimes
+  lose the aircraft.
+- **Turn-rate noise** of 1 deg^2/s^3 lets the coordinated-turn EKF's turn
+  rate run away on a manoeuvring aircraft. The default is 0.1.
+- **Gate.** PDA's gate is set at 0.999999 (about 5.3 sigma). At 0.9999 a
+  constant-velocity track lags a turning aircraft out of its gate. The
+  other trackers recover by starting a new track. MFA can't.
+- **MFA** has no initiation in Stone Soup. As in Stone Soup's MFA example,
+  its tracks are seeded from truth: the nearest `MFA_MAX_AIRCRAFT`
+  aircraft, each from an EKF over its first three detections in the subset.
+  Seeding from one detection at zero velocity lost fast jets in the first
+  scan. The notebook says it is better informed than the trackers that
+  must find aircraft themselves.
+- **Subsets.** JPDA and MFA get expensive with many tracks, so the
+  multi-target steps run on a window of scans and the detections within a
+  radius of the chosen aircraft as it moves (`TrackingData.subset`). A
+  stored run's tracks are clipped to the same window and area before
+  scoring (`TrackingData.clip`).
+
+The `notebook` extra gains ipywidgets and ortools; Stone Soup's MFA solves
+its assignment with OR-Tools. The notebook is numbered 05 for reading
+order, after 01-04, though it belongs to no milestone. Milestone 5's
+notebook, if it has one, becomes 06.

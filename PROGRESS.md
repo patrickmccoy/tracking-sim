@@ -270,6 +270,35 @@ Plan changes, all in DECISIONS.md: GLO-90 rather than GLO-30 by default
 rather than a git commit (D25), and the `aircraft_json` adapter came before
 the radar equation (D28). Decisions are D25-D30.
 
+## Between milestones 4 and 5: Stone Soup walkthrough notebook
+
+Asked for before starting milestone 5: a notebook that runs Stone Soup's
+data association, filtering and prediction algorithms on this project's
+truth and detections, built up step by step like the Stone Soup tutorials,
+with easily changed parameters and a replay of any one aircraft. Decisions
+in D31.
+
+- [x] `DetectionAdapter` (tracking.adapt): detections remapped for any state
+      layout, public, so notebooks can use acceleration and turn-rate states
+- [x] Scoring grid from look times (`grid_from_looks`) and `ScoringGrid.sample`
+      for plain Stone Soup tracks of any layout
+- [x] `TrackingData` (sim.dataset): truth plus one radar's detections,
+      simulated or loaded from a stored run; per-aircraft table, subsets
+      near one aircraft, clipping, scoring
+- [x] Pre-gate accepts a bare state (multi-frame assignment)
+- [x] Replay player (viz.replay) with an aircraft picker; ipywidgets and
+      ortools in the `notebook` extra
+- [x] `notebooks/05_stone_soup_walkthrough.ipynb`: EKF, UKF, particle
+      filter, CA, Singer, coordinated turn, multiple model, RTS smoothing,
+      replay, NN, GNN, PDA, JPDA, MFA, comparison
+- [x] Docs
+
+Checked on the synthetic hour, which runs in about 10 s and is what the
+notebook test uses, and on the roof capture, both simulated
+(`TRACKING_SIM_RECORDING`) and loaded from a stored run
+(`TRACKING_SIM_RUN`). On the capture, 41 aircraft fall within 40 km of the
+chosen one, and every association method takes 1-2 s on that subset.
+
 ## Next: milestone 5, map playground
 
 From the design: a FastAPI service over scenarios and runs; a map UI to
