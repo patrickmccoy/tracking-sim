@@ -236,7 +236,10 @@ class TrackingData:
         for seg_id in sorted(counts, key=lambda s: (-counts[s], s)):
             seg = self.truth.segment(seg_id)
             first, last = min(times[seg_id]), max(times[seg_id])
-            t = np.arange(first.timestamp(), last.timestamp() + 1e-9, 10.0)
+            # Offsets from the first detection: 1e-9 added to POSIX seconds (~1.7e9)
+            # rounds away, so an aircraft detected once would get no samples at all.
+            span = (last - first).total_seconds()
+            t = first.timestamp() + np.arange(0.0, span + 1e-6, 10.0)
             pos, vel, ok = seg.evaluate(t)
             pos, vel = pos[ok], vel[ok]
             heading = np.unwrap(np.arctan2(vel[:, 0], vel[:, 1]))

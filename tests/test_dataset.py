@@ -196,3 +196,17 @@ def test_clip_cuts_tracks_to_the_subset(data: TrackingData) -> None:
     # Without an area, only time clips: states 40-90 s in keep those from 60 s.
     (whole,) = data.subset(lo, lo + timedelta(minutes=2)).clip([Track(states[4:10], id="y")])
     assert [s.timestamp for s in whole.states] == times[6:10]
+
+
+def test_aircraft_table_handles_a_single_detection(data: TrackingData) -> None:
+    import warnings
+
+    # One scan: every aircraft in it was detected at most once.
+    one_scan = data.subset(data.scans[10].start, data.scans[10].end)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # no "mean of empty slice"
+        table = one_scan.aircraft()
+    assert table.num_rows > 0 and set(table["detections"].to_pylist()) == {1}
+    assert all(np.isfinite(v) for v in table["speed_mps"].to_pylist())
+    assert all(np.isfinite(v) for v in table["height_m"].to_pylist())
+    assert table["minutes"].to_pylist() == [0.0] * table.num_rows
