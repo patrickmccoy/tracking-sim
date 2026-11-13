@@ -458,6 +458,18 @@ Things found while building it, reflected in its defaults:
   which is zero once it has collapsed. The aircraft every filter still
   loses are slow ones flying near the antenna's height, where the assumed
   5,000 m height is badly wrong.
+- **UKF covariance repair.** With Stone Soup's default sigma points
+  (alpha 0.5, kappa 3 - n) the centre point's weight is -7 for a 6D state.
+  On aircraft that start within a kilometre or two of the radar the
+  re-fitted covariance went negative and the UKF diverged (errors of
+  10^40 m): 6 of 112 aircraft on the roof capture. The notebook's UKF
+  updater sets `force_positive_definite_covariance` (`UKF_FORCE_PD`): no
+  divergence, and 7 aircraft lost (error above 3 km) instead of 11. Other
+  sigma-point settings also stopped the divergence but lost more aircraft.
+  The coordinated-turn UKF no longer diverges either, but near the radar
+  its turn rate can still run away from the wide single-detection prior
+  (`a88497-0`: -70 deg/s). Capping the prior's spread at the slant range
+  helped some aircraft and hurt others, so it was not adopted.
 - **Turn-rate noise** of 1 deg^2/s^3 lets the coordinated-turn EKF's turn
   rate run away on a manoeuvring aircraft. The default is 0.1.
 - **Gate.** PDA's gate is set at 0.999999 (about 5.3 sigma). At 0.9999 a
