@@ -35,6 +35,16 @@ EXPECTED = {
 }
 
 
+RELATIVE_PATHS = {
+    "01_truth_playground.ipynb": {"TRACKING_SIM_RECORDING": "tests/data/synthetic_1h.parquet"},
+    "02_one_sensor.ipynb": {
+        "TRACKING_SIM_RECORDING": "tests/data/synthetic_1h.parquet",
+        "TRACKING_SIM_SENSOR": "scenarios/sensors/radar-1.yaml",
+    },
+    "03_tracking.ipynb": {"TRACKING_SIM_SCENARIO": "scenarios/kbjc-synthetic.yaml"},
+}
+
+
 def test_every_notebook_has_expectations() -> None:
     assert {p.name for p in NOTEBOOKS} == set(EXPECTED)
 
@@ -53,6 +63,10 @@ def test_notebook_runs(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "TRACKING_SIM_SCENARIO",
     ):
         monkeypatch.delenv(name, raising=False)
+    # Relative paths are from the repository root, not the notebooks directory
+    # Jupyter runs in: these name the defaults, so the expectations still hold.
+    for name, value in RELATIVE_PATHS.get(path.name, {}).items():
+        monkeypatch.setenv(name, value)
     monkeypatch.setenv("MPLBACKEND", "Agg")
     # Notebook 04 downloads real terrain by default; tests stay offline.
     monkeypatch.setenv("TRACKING_SIM_TERRAIN", "synthetic")
