@@ -172,3 +172,27 @@ def test_load_run_gives_back_the_runs_detections(traffic, tmp_path: Path) -> Non
     write_records(tmp_path / "truth.parquet", traffic.records[:-10])
     with pytest.raises(ValueError, match="has changed"):
         load_run(run_dir)
+
+
+def test_clip_cuts_tracks_to_the_subset(data: TrackingData) -> None:
+    busiest = data.aircraft()["segment_id"][0].as_py()
+    lo = START + timedelta(minutes=1)
+    part = data.subset(lo, lo + timedelta(minutes=2), around=busiest, radius_m=10_000)
+    assert part.area == (busiest, 10_000.0)
+    centre = data.truth.segment(busiest)
+    # A straight track that passes through the area, leaves, and comes back.
+    times = [START + timedelta(seconds=10 * k) for k in range(30)]
+    pos, _, _ = centre.evaluate(times)
+    offsets = [0 if k % 6 < 3 else 50_000 for k in range(30)]  # in 30 s, out 30 s, ...
+    states = [
+        State(np.array([[p[0] + off], [0], [p[1]], [0], [p[2]], [0]]), timestamp=t)
+        for t, p, off in zip(times, pos, offsets, strict=True)
+    ]
+    pieces = part.clip([Track(states, id="x"), Track([], id="empty")])
+    assert [p.id for p in pieces] == ["x/1", "x/2"]
+    for piece in pieces:
+        for s in piece.states:
+            assert part.start <= s.timestamp < part.end
+    # Without an area, only time clips: states 40-90 s in keep those from 60 s.
+    (whole,) = data.subset(lo, lo + timedelta(minutes=2)).clip([Track(states[4:10], id="y")])
+    assert [s.timestamp for s in whole.states] == times[6:10]

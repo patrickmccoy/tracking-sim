@@ -96,6 +96,7 @@ class TrackingData:
     looks: dict[str, Looks]
     paths: dict[str, GroundTruthPath]
     stored_tracks: dict[str, pa.Table] = field(default_factory=dict)
+    area: tuple[str, float] | None = None  # a subset's (aircraft, radius_m)
 
     # -- what the data is ----------------------------------------------------
 
@@ -308,7 +309,56 @@ class TrackingData:
             looks = {seg: look.take(near(look.t, look.xy)) for seg, look in looks.items()}
             looks = {seg: look for seg, look in looks.items() if len(look.t)}
             label += f", within {radius_m / 1000:g} km of {around}"
+            return replace(
+                self, label=label, scans=scans, looks=looks, area=(around, float(radius_m))
+            )
         return replace(self, label=label, scans=scans, looks=looks)
+
+    def clip(
+        self, tracks: Iterable[Track], position_mapping: tuple[int, int, int] = (0, 2, 4)
+    ) -> list[Track]:
+        """Tracks cut to this data's window (and area, for a subset near one aircraft).
+
+        Tracks made from other detections (a stored run's, over its whole
+        coverage) can then be scored on the same footing as tracks made from
+        this subset. A track that leaves the area and comes back is split,
+        so scoring never bridges the gap.
+        """
+        lo, hi = self.start.timestamp(), self.end.timestamp()
+        ix, iy = position_mapping[0], position_mapping[1]
+        centre = self.truth.segment(self.area[0]) if self.area else None
+        out = []
+        for track in tracks:
+            states = list(track.states)
+            if not states:
+                continue
+            t = np.array([s.timestamp.timestamp() for s in states])
+            keep = (t >= lo) & (t < hi)
+            if centre is not None and self.area is not None:
+                means = np.array(
+                    [
+                        np.asarray(getattr(s, "mean", s.state_vector), dtype=float).ravel()[
+                            [ix, iy]
+                        ]
+                        for s in states
+                    ]
+                )
+                pos, _, ok = centre.evaluate(t)
+                dist = np.hypot(means[:, 0] - pos[:, 0], means[:, 1] - pos[:, 1])
+                keep &= ok & (dist <= self.area[1])
+            run: list[Any] = []
+            pieces = 0
+            for state, k in zip(states, keep, strict=True):
+                if k:
+                    run.append(state)
+                elif run:
+                    pieces += 1
+                    out.append(Track(run, id=f"{track.id}/{pieces}"))
+                    run = []
+            if run:
+                pieces += 1
+                out.append(Track(run, id=f"{track.id}/{pieces}"))
+        return out
 
     # -- scoring -------------------------------------------------------------
 
