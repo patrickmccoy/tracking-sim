@@ -17,9 +17,9 @@ def test_example_specs_load(path: Path) -> None:
     assert spec.id == path.stem
 
 
-def test_the_three_examples_are_the_milestone_3_trackers() -> None:
+def test_the_examples_are_the_milestone_3_trackers_and_a_variant() -> None:
     specs = {p.stem: load_tracker_spec(p) for p in EXAMPLES}
-    assert set(specs) == {"ekf-cv-gnn", "ukf-cv-gnn", "pf-mm-gnn"}
+    assert set(specs) == {"ekf-cv-gnn", "ukf-cv-gnn", "pf-mm-gnn", "pf-mm-gnn-q50"}
     assert specs["ekf-cv-gnn"].filter == "ekf" and specs["ekf-cv-gnn"].ndim_state == 6
     assert specs["ukf-cv-gnn"].filter == "ukf"
     pf = specs["pf-mm-gnn"]
@@ -29,6 +29,11 @@ def test_the_three_examples_are_the_milestone_3_trackers() -> None:
     a = specs["ekf-cv-gnn"].model_dump(exclude={"id", "filter"})
     b = specs["ukf-cv-gnn"].model_dump(exclude={"id", "filter"})
     assert a == b
+    # The q50 variant differs from pf-mm-gnn only in horizontal process noise.
+    q50 = specs["pf-mm-gnn-q50"]
+    assert q50.motion.acceleration_noise == 50 * pf.motion.acceleration_noise
+    same = {"id": True, "motion": {"acceleration_noise"}}
+    assert q50.model_dump(exclude=same) == pf.model_dump(exclude=same)
 
 
 def test_defaults() -> None:

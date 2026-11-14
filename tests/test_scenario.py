@@ -16,13 +16,14 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_example_scenario_loads() -> None:
     scenario = load_scenario(ROOT / "scenarios/kbjc-synthetic.yaml")
     assert scenario.spec.name == "kbjc-synthetic" and scenario.spec.seed == 42
-    assert [t.id for t in scenario.trackers] == ["ekf-cv-gnn", "ukf-cv-gnn", "pf-mm-gnn"]
+    ids = [t.id for t in scenario.trackers]
+    assert ids == ["ekf-cv-gnn", "ukf-cv-gnn", "pf-mm-gnn", "pf-mm-gnn-q50"]
     assert [s.id for s in scenario.sensors] == ["radar-1"]
     assert scenario.truth_path == (ROOT / "tests/data/synthetic_1h.parquet").resolve()
     assert scenario.truth_path.exists()
     assert scenario.frame.lat == pytest.approx(39.9088)
     resolved = scenario.resolved()
-    assert resolved["sensors"][0]["id"] == "radar-1" and len(resolved["trackers"]) == 3
+    assert resolved["sensors"][0]["id"] == "radar-1" and len(resolved["trackers"]) == 4
 
 
 @pytest.fixture
@@ -61,7 +62,13 @@ def test_run_command_prints_the_comparison_and_writes_outputs(
     for tracker in ("ekf-cv-gnn", "ukf-cv-gnn", "pf-mm-gnn"):
         assert pq.read_table(out / "tracks" / f"{tracker}.parquet").num_rows > 0
     metrics = json.loads((out / "metrics.json").read_text())
-    assert [t["tracker"] for t in metrics["trackers"]] == ["ekf-cv-gnn", "pf-mm-gnn", "ukf-cv-gnn"]
+    # In the scenario's order: the tracker files sorted by name.
+    assert [t["tracker"] for t in metrics["trackers"]] == [
+        "ekf-cv-gnn",
+        "pf-mm-gnn-q50",
+        "pf-mm-gnn",
+        "ukf-cv-gnn",
+    ]
     assert metrics["trackers"][0]["over_time"][0]["ospa_m"] >= 0
     resolved = yaml.safe_load((out / "scenario.resolved.yaml").read_text())
     assert resolved["seed"] == 7 and resolved["sensors"][0]["id"] == "radar-1"
@@ -106,7 +113,7 @@ def test_terrain_example_scenario_loads() -> None:
     assert [s.type for s in scenario.sensors] == ["rotating_radar_2d", "passive_bearing"]
     assert scenario.spec.terrain is not None and scenario.spec.terrain.source == "copernicus"
     assert scenario.sensors[0].detection.model == "radar_equation"
-    assert len(scenario.trackers) == 3
+    assert len(scenario.trackers) == 4
 
 
 def test_with_truth_swaps_in_a_capture(small_scenario: Path, tmp_path: Path) -> None:

@@ -17,6 +17,7 @@ trackers:
   - trackers/ekf-cv-gnn.yaml
   - trackers/ukf-cv-gnn.yaml
   - trackers/pf-mm-gnn.yaml
+  - trackers/pf-mm-gnn-q50.yaml
 seed: 42
 metrics:
   cutoff_m: 1000                  # OSPA/GOSPA cut-off

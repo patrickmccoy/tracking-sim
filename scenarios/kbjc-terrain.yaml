@@ -45,4 +45,5 @@ trackers:
   - trackers/ekf-cv-gnn.yaml
   - trackers/ukf-cv-gnn.yaml
   - trackers/pf-mm-gnn.yaml
+  - trackers/pf-mm-gnn-q50.yaml
 seed: 42

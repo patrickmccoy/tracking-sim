@@ -29,7 +29,11 @@ EXPECTED = {
         ["NOT consistent"],
     ),
     "03_tracking.ipynb": (
-        ["trackers: ekf-cv-gnn, ukf-cv-gnn, pf-mm-gnn", "lowest mean OSPA:", "configured 0.900"],
+        [
+            "trackers: ekf-cv-gnn, ukf-cv-gnn, pf-mm-gnn, pf-mm-gnn-q50",
+            "lowest mean OSPA:",
+            "configured 0.900",
+        ],
         [],
     ),
     "05_stone_soup_walkthrough.ipynb": (

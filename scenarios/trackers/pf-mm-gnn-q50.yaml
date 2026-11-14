@@ -1,0 +1,29 @@
+# pf-mm-gnn with 50 times its horizontal process noise, for comparison.
+# With little noise, resampled particles barely spread between scans, so in
+# a turn the cloud can collapse onto a few particles and lose the aircraft;
+# more noise keeps it spread, at the cost of a wider gate (more false
+# alarms associated). On the roof capture this halved the track fragments
+# and lowered OSPA; on the synthetic hour it raised OSPA and lowered
+# completeness (DECISIONS.md, D33). Load with
+# tracking_sim.tracking.load_tracker_spec.
+id: pf-mm-gnn-q50
+filter: particle_mm
+motion:
+  model: cv_ct                   # constant velocity + coordinated turn
+  acceleration_noise: 50.0       # m^2/s^3, horizontal (pf-mm-gnn: 1.0)
+  vertical_acceleration_noise: 0.1
+  turn_rate_noise_deg: 1.0       # deg^2/s^3
+  switch_probability: 0.05       # per update
+particles:
+  count: 1000                    # per confirmed track
+association:
+  method: gnn
+  gate: 3.0
+initiation:
+  min_points: 3
+  assumed_height_m: 5000
+  height_sigma_m: 3000
+  speed_sigma_mps: 150
+  vertical_speed_sigma_mps: 10
+deletion:
+  missed_scans: 3
