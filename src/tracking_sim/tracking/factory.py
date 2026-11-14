@@ -203,7 +203,12 @@ def build_tracker(spec: TrackerSpec, *, seed: int = 0) -> TrackerPipeline:
         updater = ExtendedKalmanUpdater(measurement_model=None)
     elif spec.filter == "ukf":
         predictor = UnscentedKalmanPredictor(_cv(spec))
-        updater = UnscentedKalmanUpdater(measurement_model=None)
+        # With Stone Soup's default sigma points the centre weight is negative,
+        # and a strongly non-linear update can leave a covariance with negative
+        # variances; repair it rather than let the track diverge (D32).
+        updater = UnscentedKalmanUpdater(
+            measurement_model=None, force_positive_definite_covariance=True
+        )
     else:
         m = spec.motion
         straight = _cv(spec)

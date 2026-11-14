@@ -71,6 +71,8 @@ def test_each_example_builds_the_right_components() -> None:
     assert ekf.position_mapping == (0, 2, 4)
     ukf = build_tracker(tracker_spec("ukf-cv-gnn"))
     assert isinstance(ukf.predictor, UnscentedKalmanPredictor)
+    # Stone Soup's default sigma points can make a covariance negative (D32).
+    assert ukf.updater.force_positive_definite_covariance
     pf = build_tracker(tracker_spec("pf-mm-gnn"))
     assert isinstance(pf.predictor, MultiModelPredictor) and pf.ndim_state == 7
     assert pf.position_mapping == (0, 2, 5) and pf.velocity_mapping == (1, 3, 6)

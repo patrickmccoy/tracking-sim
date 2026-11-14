@@ -495,3 +495,15 @@ The `notebook` extra gains ipywidgets and ortools; Stone Soup's MFA solves
 its assignment with OR-Tools. The notebook is numbered 05 for reading
 order, after 01-04, though it belongs to no milestone. Milestone 5's
 notebook, if it has one, becomes 06.
+
+## D32. Repairing the UKF tracker's covariance
+
+The `ukf` filter's updater sets Stone Soup's
+`force_positive_definite_covariance`. With the default sigma points (alpha
+0.5, kappa 3 - n) the centre point's weight is -7 for the 6D state, and a
+strongly non-linear update can leave a covariance with negative variances,
+after which the filter diverges. Notebook 05's UKF did this on aircraft
+first seen close to the radar (D31). The tracker starts its UKF from an
+EKF after `min_points` detections, so on the synthetic hour and the roof
+capture the repair never triggered and every score is unchanged. It is
+there for the case that would otherwise blow up.
