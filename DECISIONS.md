@@ -469,7 +469,11 @@ Things found while building it, reflected in its defaults:
   The coordinated-turn UKF no longer diverges either, but near the radar
   its turn rate can still run away from the wide single-detection prior
   (`a88497-0`: -70 deg/s). Capping the prior's spread at the slant range
-  helped some aircraft and hurt others, so it was not adopted.
+  helped some aircraft and hurt others, so it was not adopted. Instead the
+  UKF turn filter starts from the EKF after `WARM_START` detections, like
+  the particle filters: 5 aircraft lost instead of 7, and `a88497-0` at
+  383 m median instead of 5 km. The EKF turn filter keeps its
+  single-detection start; warm-starting it made one aircraft diverge.
 - **Turn-rate noise** of 1 deg^2/s^3 lets the coordinated-turn EKF's turn
   rate run away on a manoeuvring aircraft. The default is 0.1.
 - **Gate.** PDA's gate is set at 0.999999 (about 5.3 sigma). At 0.9999 a
