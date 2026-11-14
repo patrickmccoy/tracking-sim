@@ -487,12 +487,12 @@ To build Stone Soup trackers yourself, as notebook 05 does, start from `Tracking
 ```python
 from tracking_sim.sim.dataset import load_run, simulate
 
-data = simulate(truth, spec, seed=42)   # or load_run("kbjc-synthetic-1a2b", store="runs")
-data.batches()                          # (scan end, detections) for a Stone Soup tracker
-data.detections_of("ac5044-0")          # one aircraft's TrueDetections
-data.aircraft()                         # per-aircraft table: detections, speed, height, turn rate
+data = simulate(truth, spec, seed=42)  # or load_run("kbjc-synthetic-1a2b", store="runs")
+data.batches()  # (scan end, detections) for a Stone Soup tracker
+data.detections_of("ac5044-0")  # one aircraft's TrueDetections
+data.aircraft()  # per-aircraft table: detections, speed, height, turn rate
 part = data.subset(start, end, around="ac5044-0", radius_m=40_000)  # smaller, for JPDA or MFA
-part.score("my tracker", tracks)        # OSPA, GOSPA and SIAP for any Stone Soup tracks
+part.score("my tracker", tracks)  # OSPA, GOSPA and SIAP for any Stone Soup tracks
 ```
 
 `tracking_sim.viz.replay.Replay(data, segment_id, estimates).widget()` replays one aircraft with any tracks (needs the `notebook` extra).
