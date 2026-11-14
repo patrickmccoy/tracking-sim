@@ -301,9 +301,11 @@ chosen one, and every association method takes 1-2 s on that subset.
 
 Follow-up: the particle filters sometimes veered kilometres off course.
 Their particles collapsed in turns with the Kalman filters' process noise;
-they now use their own, `PF_Q = 50` (D31). The `pf-mm-gnn` tracker spec
-uses 1.0 and probably suffers the same way; not changed yet, since that
-changes the scenario's results.
+they now use their own, `PF_Q = 50` (D31). For the scenario trackers,
+50 helped on the roof capture and hurt on the synthetic hour, so
+`pf-mm-gnn` keeps 1.0 and `pf-mm-gnn-q50` runs alongside it (D33). The
+UKF notebook fixes led to the `ukf` tracker repairing negative
+covariances (D32); it never triggered on either dataset.
 
 ## Next: milestone 5, map playground
 

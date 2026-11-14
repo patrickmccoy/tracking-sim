@@ -114,13 +114,14 @@ detection:
 
 ### Trackers and scoring
 
-A tracker is a YAML spec naming each Stone Soup component, so comparing filters is a config diff on identical detections. Three examples live in [scenarios/trackers/](scenarios/trackers/):
+A tracker is a YAML spec naming each Stone Soup component, so comparing filters is a config diff on identical detections. Four examples live in [scenarios/trackers/](scenarios/trackers/):
 
 | Spec | Filter | Motion model | State |
 | --- | --- | --- | --- |
 | `ekf-cv-gnn` (baseline) | extended Kalman | constant velocity | `[x, vx, y, vy, z, vz]` |
 | `ukf-cv-gnn` | unscented Kalman | constant velocity | same |
 | `pf-mm-gnn` | multiple-model particle filter (1,000 particles) | constant velocity or coordinated turn | adds turn rate |
+| `pf-mm-gnn-q50` | the same, with process noise 50 instead of 1 | same | same |
 
 ```yaml
 id: ekf-cv-gnn
@@ -146,11 +147,14 @@ uv run tracking-sim run scenarios/kbjc-synthetic.yaml
 ```
 
 ```
-tracker     run s  tracks  OSPA m  GOSPA   loc  missed  false  complete  ambig  spurious  pos acc m  longest  latency s  never
-ekf-cv-gnn   15.3      65     445   1532  1106     201    226      0.89   1.00      0.12        341     0.66         10      2
-ukf-cv-gnn   16.0      59     470   1653  1163     232    258      0.87   1.00      0.14        363     0.65         12      1
-pf-mm-gnn    23.7      56     542   1854  1255     320    278      0.82   1.00      0.16        415     0.67         15      1
+tracker        run s  tracks  OSPA m  GOSPA   loc  missed  false  complete  ambig  spurious  pos acc m  longest  latency s  never
+ekf-cv-gnn      15.3      65     445   1532  1106     201    226      0.89   1.00      0.12        341     0.66         10      2
+ukf-cv-gnn      15.8      59     470   1653  1163     232    258      0.87   1.00      0.14        363     0.65         12      1
+pf-mm-gnn       23.8      56     542   1854  1255     320    278      0.82   1.00      0.16        415     0.67         15      1
+pf-mm-gnn-q50   23.2      39     573   1960  1002     484    475      0.73   1.00      0.26        372     0.68         15      0
 ```
+
+The two particle trackers differ only in process noise. More noise keeps a particle cloud spread through turns, so tracks break up less, but it also widens the gate. On this synthetic hour that costs completeness and adds false tracks; on a real capture with more manoeuvring it halved the track fragments and lowered OSPA (DECISIONS.md, D33).
 
 Each run is stored once in the **run store**, `runs/<name>-<hash>/`: the resolved configuration, a manifest, detections, every tracker's tracks (Parquet), `metrics.json` (summary and per-scan OSPA/GOSPA) and the table, all read-only. The hash covers the resolved scenario, the input data (truth, terrain, aircraft classes), the seed and the code (a digest of the package source and the Stone Soup, NumPy and SciPy versions), so running an identical scenario again reuses the stored run, and any change makes a new one. `tracking-sim runs list`, `runs show ID` and `runs compare A B` browse them; `--out DIR` writes a plain directory outside the store instead.
 

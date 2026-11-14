@@ -507,3 +507,27 @@ first seen close to the radar (D31). The tracker starts its UKF from an
 EKF after `min_points` detections, so on the synthetic hour and the roof
 capture the repair never triggered and every score is unchanged. It is
 there for the case that would otherwise blow up.
+
+## D33. A second particle tracker with more process noise
+
+Notebook 05's particle filters collapsed in turns with little process
+noise (D31). The `pf-mm-gnn` tracker also has little (1.0), so it was run
+with 50 as well, four tracker seeds each:
+
+| | tracks | OSPA | GOSPA false | completeness |
+| --- | --- | --- | --- | --- |
+| roof capture, 1.0 | 412 | 488 m | 5874 | 0.87 |
+| roof capture, 50 | 204 | 465 m | 4353 | 0.87 |
+| synthetic hour, 1.0 | 61 | 460 m | 274 | 0.91 |
+| synthetic hour, 50 | 41 | 523 m | 433 | 0.80 |
+
+Noise 50 for the particles only, keeping 1.0 for the EKF that confirms
+tracks, was no better. The tracker differs from the notebook's filters in
+two ways that blunt the gain: it already has a coordinated-turn model, and
+it deletes a lost track and starts a new one instead of drifting. Extra
+noise also widens the gate, which pulls in false alarms.
+
+With no clear winner, `pf-mm-gnn` keeps 1.0 and `pf-mm-gnn-q50` (identical
+but for the noise) joins both example scenarios, so every run compares
+them on the same detections. It adds about 25 s to a run of the
+synthetic hour.
