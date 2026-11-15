@@ -1,6 +1,12 @@
 // One GeoJSON source and the layers drawn from it.
 
-import type { GeoJSONSource, LayerSpecification, Map as MlMap, MapLayerMouseEvent } from "maplibre-gl";
+import type {
+  FilterSpecification,
+  GeoJSONSource,
+  LayerSpecification,
+  Map as MlMap,
+  MapLayerMouseEvent,
+} from "maplibre-gl";
 import { useEffect, useRef } from "react";
 import { useMap } from "./MapView";
 
@@ -23,10 +29,12 @@ interface GeoJsonLayerProps {
   /** Draw below this existing layer (default: on top). */
   before?: string;
   visible?: boolean;
+  /** A filter applied to every layer (in addition to none of their own). */
+  filter?: FilterSpecification;
   onClick?: (feature: GeoJSON.Feature, event: MapLayerMouseEvent) => void;
 }
 
-export function GeoJsonLayer({ id, data, layers, before, visible = true, onClick }: GeoJsonLayerProps) {
+export function GeoJsonLayer({ id, data, layers, before, visible = true, filter, onClick }: GeoJsonLayerProps) {
   const map = useMap();
   const click = useRef(onClick);
   click.current = onClick;
@@ -75,6 +83,13 @@ export function GeoJsonLayer({ id, data, layers, before, visible = true, onClick
       if (map.getLayer(layer.id)) map.setLayoutProperty(layer.id, "visibility", visible ? "visible" : "none");
     }
   }, [map, visible]);
+
+  const filterKey = JSON.stringify(filter ?? null);
+  useEffect(() => {
+    for (const layer of layers) {
+      if (map.getLayer(layer.id)) map.setFilter(layer.id, filter ?? null);
+    }
+  }, [map, filterKey]);
 
   return null;
 }

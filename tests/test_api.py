@@ -191,3 +191,34 @@ def test_coverage_for_a_dragged_sensor(client: TestClient) -> None:
     bad = {**sensor, "coverage": {**sensor["coverage"], "range_max_m": -1}}
     assert client.post("/api/coverage", json={"sensor": bad}).status_code == 422
     assert client.post("/api/coverage", json={"sensor": sensor, "heights_m": []}).status_code == 422
+
+
+def test_elevation_comes_from_the_scenario_terrain(client: TestClient) -> None:
+    ridge = {
+        "source": "synthetic",
+        "ridge": {"lat": 39.9, "lon": -105.2, "height_m": 900, "base_m": 1700},
+    }
+    points = [[39.9, -105.2], [39.9, -104.9]]
+    body = client.post("/api/elevation", json={"terrain": ridge, "points": points}).json()
+    top, plain = body["heights_m"]
+    assert top == pytest.approx(2600, abs=1) and plain == pytest.approx(1700, abs=1)
+    none = client.post("/api/elevation", json={"terrain": None, "points": points}).json()
+    assert none == {"heights_m": [None, None]}
+    assert client.post("/api/elevation", json={"points": []}).status_code == 422
+
+
+def test_an_edited_scenario_exports_as_yaml(client: TestClient, workspace: Path) -> None:
+    doc = client.get("/api/scenarios/small").json()["scenario"]
+    doc["name"] = 'moved "radar"'
+    doc["sensors"][0]["position"]["lon"] = -105.0
+    response = client.post("/api/scenarios/export", json={"scenario": doc})
+    assert response.status_code == 200
+    assert 'filename="moved-radar.yaml"' in response.headers["content-disposition"]
+    saved = workspace / "scenarios" / "moved.yaml"
+    saved.write_text(response.text)
+    try:
+        assert load_scenario(saved).sensors[0].position.lon == -105.0
+    finally:
+        saved.unlink()
+    doc["seed"] = -1
+    assert client.post("/api/scenarios/export", json={"scenario": doc}).status_code == 422

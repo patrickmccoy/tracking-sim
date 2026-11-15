@@ -245,3 +245,220 @@ button.primary {
     border-top: 1px solid var(--border);
   }
 }
+
+h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 12px 0 4px;
+}
+
+.small {
+  font-size: 12px;
+}
+
+.strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.row.actions {
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.seed {
+  width: 84px;
+}
+
+.field.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.field.check input {
+  margin: 0;
+}
+
+.field.invalid input {
+  border-color: var(--critical);
+}
+
+.input-unit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.input-unit .unit {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 0 0 10px;
+  padding: 8px 10px 10px;
+}
+
+legend {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 0 4px;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+}
+
+.grid2 > .field.check {
+  align-self: end;
+  padding-bottom: 4px;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+button.link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+button.danger:hover:not(:disabled) {
+  border-color: var(--critical);
+  color: var(--critical);
+}
+
+.list-item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  text-align: left;
+  border-color: transparent;
+  background: transparent;
+  padding: 5px 8px;
+}
+
+.list-item.active {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.sensor-list li + li {
+  margin-top: 2px;
+}
+
+.map-panel {
+  position: absolute;
+  z-index: 2;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 0.12);
+  padding: 8px 10px;
+}
+
+.legend {
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.legend p {
+  margin: 2px 0 0;
+}
+
+.swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.map-hint {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text-primary);
+  color: var(--surface-1);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+}
+
+.map-hint button.link {
+  color: inherit;
+}
+
+/* Sensors on the map: always dark on the light base map, whatever the UI theme. */
+.sensor-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: grab;
+}
+
+.sensor-marker .dot {
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  border-radius: 50%;
+  background: #0b0b0b;
+  border: 2.5px solid #fcfcfb;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.3);
+}
+
+.sensor-marker.passive .dot {
+  border-radius: 3px;
+  transform: rotate(45deg);
+}
+
+.sensor-marker.selected .dot {
+  background: #6250d6;
+}
+
+.sensor-marker .label {
+  margin-top: 2px;
+  font: 600 12px var(--font);
+  color: #0b0b0b;
+  text-shadow:
+    0 0 3px #fcfcfb,
+    0 0 3px #fcfcfb,
+    0 0 3px #fcfcfb;
+  white-space: nowrap;
+}

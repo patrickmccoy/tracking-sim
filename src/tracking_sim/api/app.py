@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
@@ -99,6 +102,13 @@ class CoverageRequest(BaseModel):
     sensor: dict[str, Any]
     terrain: dict[str, Any] | None = None
     heights_m: list[float] = [300.0, 1500.0, 3000.0]
+
+
+class ElevationRequest(BaseModel):
+    """Ground heights at points, from a scenario's terrain."""
+
+    terrain: dict[str, Any] | None = None
+    points: list[tuple[float, float]]  # (lat, lon)
 
 
 def _validation_detail(exc: ValidationError) -> Any:
@@ -249,6 +259,50 @@ def create_app(settings: Settings) -> FastAPI:
         except OSError as exc:
             raise HTTPException(503, f"terrain: {exc}") from None
         return coverage(sensor, request.heights_m, terrain=terrain)
+
+    @app.post("/api/elevation")
+    def elevation(request: ElevationRequest) -> dict[str, Any]:
+        """Terrain height at each point, or nulls when the scenario has no terrain."""
+        if not 0 < len(request.points) <= 1000:
+            raise HTTPException(422, "give between 1 and 1000 points")
+        try:
+            spec = None if request.terrain is None else TerrainSpec.model_validate(request.terrain)
+        except ValidationError as exc:
+            raise HTTPException(422, _validation_detail(exc)) from None
+        if spec is None:
+            return {"heights_m": [None] * len(request.points)}
+        lat, lon = (np.array(v, dtype=float) for v in zip(*request.points, strict=True))
+        try:
+            # A small reach: copernicus then loads only the tiles under the points.
+            terrain = terrain_for(spec, float(lat.mean()), float(lon.mean()), 1000.0)
+        except ImportError:
+            raise HTTPException(422, "copernicus terrain needs the terrain extra") from None
+        except OSError as exc:
+            raise HTTPException(503, f"terrain: {exc}") from None
+        heights = np.asarray(terrain.height(lat, lon), dtype=float)
+        return {"heights_m": [None if np.isnan(h) else round(float(h), 1) for h in heights]}
+
+    @app.post("/api/scenarios/export")
+    def export_scenario(request: RunRequest) -> Response:
+        """The scenario as a YAML file, after the same checks a run makes."""
+        try:
+            scenario_from_dict(request.scenario, root)
+        except ValidationError as exc:
+            raise HTTPException(422, _validation_detail(exc)) from None
+        except (ValueError, OSError) as exc:
+            raise HTTPException(422, str(exc)) from None
+        name = str(request.scenario.get("name", "scenario"))
+        header = (
+            f"# {name}, saved from the tracking-sim map playground.\n"
+            "# Paths are relative to the scenarios directory: save it there to run it.\n"
+        )
+        body = yaml.safe_dump(request.scenario, sort_keys=False)
+        filename = re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip("-.") or "scenario"
+        return Response(
+            header + body,
+            media_type="application/yaml",
+            headers={"Content-Disposition": f'attachment; filename="{filename}.yaml"'},
+        )
 
     @app.post("/api/runs", status_code=202)
     def start_run(request: RunRequest) -> dict[str, Any]:

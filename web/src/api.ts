@@ -213,6 +213,20 @@ export const api = {
     request<TrackData>(`/runs/${encodeURIComponent(id)}/tracks/${encodeURIComponent(tracker)}`),
   startRun: (scenario: ScenarioDoc) => post<Job>("/runs", { scenario }),
   job: (id: string) => request<Job>(`/jobs/${encodeURIComponent(id)}`),
+  elevation: (terrain: Record<string, unknown> | null, points: [number, number][]) =>
+    post<{ heights_m: (number | null)[] }>("/elevation", { terrain, points }),
+  exportScenario: async (scenario: ScenarioDoc): Promise<Blob> => {
+    const response = await fetch("/api/scenarios/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scenario }),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as { detail?: unknown };
+      throw new ApiError(response.status, body.detail ?? response.statusText);
+    }
+    return response.blob();
+  },
   coverage: (
     sensor: SensorSpec,
     terrain: Record<string, unknown> | null,

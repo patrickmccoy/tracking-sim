@@ -103,6 +103,22 @@ def _intervals(
     )
 
 
+def _coords(frame: LocalFrame, ring: FloatArray) -> list[list[float]]:
+    """Local east/north points to GeoJSON [lon, lat], anticlockwise.
+
+    The rings are built clockwise in compass azimuth, which is clockwise on
+    the map, so they are reversed for GeoJSON's anticlockwise exteriors.
+    """
+    lat, lon, _ = frame.to_geodetic(ring[:, 0], ring[:, 1], np.zeros(len(ring)))
+    coords: list[list[float]] = np.round(np.column_stack([lon, lat]), 6)[::-1].tolist()
+    return coords
+
+
+def _ring(frame: LocalFrame, arc: FloatArray, radius: float) -> list[list[float]]:
+    points = np.column_stack([np.sin(arc) * radius, np.cos(arc) * radius])
+    return _coords(frame, np.vstack([points[:-1], points[:1]]))
+
+
 def coverage(
     spec: AnySensorSpec,
     heights_m: Sequence[float],
@@ -149,16 +165,19 @@ def coverage(
             arc = np.radians(lo + np.linspace(0, width, max(int(np.ceil(width)), 1) + 1))
             for r0, r1 in row:
                 area += float(np.radians(width)) / 2 * (r1**2 - r0**2)
+                if width >= 360.0:
+                    # A whole disc or annulus: rings with no radial seam.
+                    rings = [_ring(frame, arc, r1)]
+                    if r0 > 0:
+                        rings.append(_ring(frame, arc, r0)[::-1])
+                    polygons.append(rings)
+                    continue
                 outer = np.column_stack([np.sin(arc) * r1, np.cos(arc) * r1])
                 if r0 > 0:
                     inner = np.column_stack([np.sin(arc) * r0, np.cos(arc) * r0])[::-1]
                 else:
                     inner = np.zeros((1, 2))
-                ring = np.vstack([outer, inner, outer[:1]])
-                lat, lon, _ = frame.to_geodetic(ring[:, 0], ring[:, 1], np.zeros(len(ring)))
-                # Clockwise in azimuth is clockwise on the map: reverse for GeoJSON.
-                coords = np.round(np.column_stack([lon, lat]), 6)[::-1].tolist()
-                polygons.append([coords])
+                polygons.append([_coords(frame, np.vstack([outer, inner, outer[:1]]))])
         features.append(
             {
                 "type": "Feature",

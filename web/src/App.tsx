@@ -1,14 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
-import { api, type Config, type ScenarioEntry, type ScenarioResponse } from "./api";
-import { GeoJsonLayer } from "./map/GeoJsonLayer";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { api, type Config, type ScenarioDoc, type ScenarioEntry, type ScenarioResponse, type SensorSpec } from "./api";
+import { CoverageLegend } from "./components/CoverageLegend";
+import { ScenarioPanel } from "./components/ScenarioPanel";
+import { SensorForm } from "./components/SensorForm";
+import { CoverageLayer } from "./map/CoverageLayer";
+import { MapClick } from "./map/MapClick";
 import { MapView } from "./map/MapView";
-import { colors } from "./theme";
+import { SensorMarkers } from "./map/SensorMarkers";
+import { useCoverage } from "./map/useCoverage";
+import { newSensor } from "./scenario/templates";
+import { coverageSteps } from "./theme";
+
+type SensorType = SensorSpec["type"];
 
 export function App() {
   const [config, setConfig] = useState<Config | null>(null);
   const [scenarios, setScenarios] = useState<ScenarioEntry[]>([]);
   const [key, setKey] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<ScenarioResponse | null>(null);
+  const [draft, setDraft] = useState<ScenarioDoc | null>(null);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [placing, setPlacing] = useState<SensorType | null>(null);
+  const [heights, setHeights] = useState(coverageSteps.map((s) => s.height_m));
+  const [showCoverage, setShowCoverage] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -21,26 +35,95 @@ export function App() {
       .catch((e: Error) => setError(`Can't reach the tracking-sim server: ${e.message}`));
   }, []);
 
-  useEffect(() => {
-    if (!key) return;
+  const load = useCallback((k: string) => {
     api
-      .scenario(key)
-      .then(setLoaded)
+      .scenario(k)
+      .then((r) => {
+        setLoaded(r);
+        setDraft(structuredClone(r.scenario));
+        setSelected(null);
+        setPlacing(null);
+        setError(null);
+      })
       .catch((e: Error) => setError(e.message));
-  }, [key]);
+  }, []);
 
-  const scenario = loaded?.scenario;
-  const sensors = useMemo<GeoJSON.FeatureCollection>(
-    () => ({
-      type: "FeatureCollection",
-      features: (scenario?.sensors ?? []).map((s) => ({
-        type: "Feature",
-        properties: { id: s.id, type: s.type },
-        geometry: { type: "Point", coordinates: [s.position.lon, s.position.lat] },
-      })),
-    }),
-    [scenario],
+  useEffect(() => {
+    if (key) load(key);
+  }, [key, load]);
+
+  const dirty = useMemo(
+    () => !!loaded && !!draft && JSON.stringify(loaded.scenario) !== JSON.stringify(draft),
+    [loaded, draft],
   );
+  const coverage = useCoverage(draft?.sensors ?? [], draft?.terrain ?? null);
+
+  const updateSensor = (index: number, sensor: SensorSpec) =>
+    setDraft((d) => d && { ...d, sensors: d.sensors.map((s, i) => (i === index ? sensor : s)) });
+
+  // The ground under a moved or dropped sensor, when the scenario has terrain.
+  const groundUnder = async (index: number, lat: number, lon: number) => {
+    if (!draft?.terrain) return;
+    try {
+      const { heights_m } = await api.elevation(draft.terrain, [[lat, lon]]);
+      const h = heights_m[0];
+      if (h === null || h === undefined) return;
+      setDraft(
+        (d) =>
+          d && {
+            ...d,
+            sensors: d.sensors.map((s, i) => (i === index ? { ...s, position: { ...s.position, alt_m: h } } : s)),
+          },
+      );
+    } catch (e) {
+      setError(`Ground height: ${(e as Error).message}`);
+    }
+  };
+
+  const moveSensor = (index: number, lat: number, lon: number, done: boolean) => {
+    const r = (x: number) => Math.round(x * 1e5) / 1e5;
+    setDraft(
+      (d) =>
+        d && {
+          ...d,
+          sensors: d.sensors.map((s, i) => (i === index ? { ...s, position: { ...s.position, lat: r(lat), lon: r(lon) } } : s)),
+        },
+    );
+    if (done) void groundUnder(index, lat, lon);
+  };
+
+  const place = (lat: number, lon: number) => {
+    if (!draft || !placing) return;
+    const sensor = newSensor(draft, placing, lat, lon);
+    const index = draft.sensors.length;
+    setDraft({ ...draft, sensors: [...draft.sensors, sensor] });
+    setSelected(index);
+    setPlacing(null);
+    void groundUnder(index, sensor.position.lat, sensor.position.lon);
+  };
+
+  const removeSensor = (index: number) => {
+    setDraft((d) => d && { ...d, sensors: d.sensors.filter((_, i) => i !== index) });
+    setSelected(null);
+  };
+
+  const save = async () => {
+    if (!draft) return;
+    try {
+      const blob = await api.exportScenario(draft);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${draft.name.replace(/[^A-Za-z0-9_.-]+/g, "-") || "scenario"}.yaml`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(`Can't save: ${(e as Error).message}`);
+    }
+  };
+
+  const sensor = selected === null ? null : draft?.sensors[selected] ?? null;
+  const radars = draft?.sensors.filter((s) => s.type === "rotating_radar_2d").length ?? 0;
 
   return (
     <div className="app">
@@ -56,71 +139,91 @@ export function App() {
             ))}
           </select>
         </label>
+        {dirty && <span className="badge">edited</span>}
         {config && <span className="muted version">v{config.version}</span>}
       </header>
       <aside className="sidebar">
-        {error && <p className="error">{error}</p>}
-        {scenario && (
-          <section>
+        {error && (
+          <p className="error" role="alert">
+            {error} <button className="link" onClick={() => setError(null)}>dismiss</button>
+          </p>
+        )}
+        {draft && loaded && (
+          <>
             <h2>Scenario</h2>
-            <dl className="facts">
-              <dt>Truth</dt>
-              <dd title={scenario.truth.path}>{scenario.truth.path.split("/").pop()}</dd>
-              <dt>Window</dt>
-              <dd>{scenario.truth.window ? scenario.truth.window.map((w) => w.slice(0, 16).replace("T", " ")).join(" to ") : "all"}</dd>
-              <dt>Terrain</dt>
-              <dd>{scenario.terrain ? String(scenario.terrain.source) : "none"}</dd>
-              <dt>Seed</dt>
-              <dd>{scenario.seed}</dd>
-            </dl>
+            <ScenarioPanel
+              draft={draft}
+              allTrackers={loaded.scenario.trackers}
+              dirty={dirty}
+              onChange={setDraft}
+              onReset={() => key && load(key)}
+              onSave={save}
+            />
             <h2>Sensors</h2>
-            <ul className="plain">
-              {scenario.sensors.map((s) => (
-                <li key={s.id}>
-                  {s.id} <span className="muted">{s.type.replaceAll("_", " ")}</span>
+            <ul className="plain sensor-list">
+              {draft.sensors.map((s, i) => (
+                <li key={i}>
+                  <button className={`list-item ${i === selected ? "active" : ""}`} onClick={() => setSelected(i === selected ? null : i)}>
+                    <span>{s.id || "(no id)"}</span>
+                    <span className="muted small">
+                      {s.type === "rotating_radar_2d" ? "radar" : "passive"}
+                      {coverage.errors[s.id] ? " · needs fixing" : ""}
+                    </span>
+                  </button>
                 </li>
               ))}
             </ul>
-            <h2>Trackers</h2>
-            <ul className="plain">
-              {scenario.trackers.map((t) => (
-                <li key={t.id}>{t.id}</li>
-              ))}
-            </ul>
-          </section>
+            <div className="row actions">
+              <button className={placing === "rotating_radar_2d" ? "primary" : ""} onClick={() => setPlacing(placing === "rotating_radar_2d" ? null : "rotating_radar_2d")}>
+                + Radar
+              </button>
+              <button className={placing === "passive_bearing" ? "primary" : ""} onClick={() => setPlacing(placing === "passive_bearing" ? null : "passive_bearing")}>
+                + Passive sensor
+              </button>
+            </div>
+            {radars === 0 && draft.trackers.length > 0 && (
+              <p className="error small">Trackers need at least one radar.</p>
+            )}
+            {sensor && selected !== null && (
+              <>
+                <h2>{sensor.id || "Sensor"}</h2>
+                <SensorForm
+                  sensor={sensor}
+                  takenIds={draft.sensors.filter((_, i) => i !== selected).map((s) => s.id)}
+                  errors={coverage.errors[sensor.id] ?? {}}
+                  onChange={(s) => updateSensor(selected, s)}
+                  onDelete={() => removeSensor(selected)}
+                />
+              </>
+            )}
+          </>
         )}
       </aside>
       <main className="main">
-        {config && loaded && (
+        {config && loaded && draft && (
           <MapView styleUrl={config.map_style} center={[loaded.frame.lon, loaded.frame.lat]} zoom={8}>
-            <GeoJsonLayer
-              id="sensors"
-              data={sensors}
-              layers={[
-                {
-                  id: "sensors-dot",
-                  type: "circle",
-                  paint: {
-                    "circle-radius": 7,
-                    "circle-color": colors.sensor,
-                    "circle-stroke-color": colors.halo,
-                    "circle-stroke-width": 2,
-                  },
-                },
-                {
-                  id: "sensors-label",
-                  type: "symbol",
-                  layout: {
-                    "text-field": ["get", "id"],
-                    "text-offset": [0, 1.3],
-                    "text-anchor": "top",
-                    "text-size": 12,
-                  },
-                  paint: { "text-color": colors.truthLabel, "text-halo-color": colors.halo, "text-halo-width": 1.5 },
-                },
-              ]}
-            />
+            <CoverageLayer data={coverage.collection} heights={heights} visible={showCoverage} sensorId={sensor?.id ?? null} />
+            <SensorMarkers sensors={draft.sensors} selected={selected} onMove={moveSensor} onSelect={setSelected} />
+            {placing && <MapClick onClick={place} cursor="crosshair" />}
           </MapView>
+        )}
+        {placing && (
+          <div className="map-hint">
+            Click the map to place the {placing === "rotating_radar_2d" ? "radar" : "passive sensor"}.{" "}
+            <button className="link" onClick={() => setPlacing(null)}>
+              Cancel
+            </button>
+          </div>
+        )}
+        {draft && (
+          <CoverageLegend
+            sensorId={sensor?.id ?? null}
+            heights={heights}
+            visible={showCoverage}
+            busy={coverage.busy}
+            onHeights={setHeights}
+            onVisible={setShowCoverage}
+          />
         )}
       </main>
     </div>
