@@ -1,6 +1,7 @@
 # The milestone 3 baseline: extended Kalman filter, constant velocity,
 # global nearest neighbour association. Load with
 # tracking_sim.tracking.load_tracker_spec.
+# Every key, with its default: docs/configuration.md.
 id: ekf-cv-gnn
 filter: ekf                      # ekf, ukf or particle_mm
 motion:

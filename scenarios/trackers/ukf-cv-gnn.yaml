@@ -1,6 +1,7 @@
 # The baseline with an unscented Kalman filter instead of an extended one:
 # the same motion model, association, initiation and deletion. Load with
 # tracking_sim.tracking.load_tracker_spec.
+# Every key, with its default: docs/configuration.md.
 id: ukf-cv-gnn
 filter: ukf
 motion:

@@ -8,6 +8,7 @@
 # The first run downloads about 57 MB of Copernicus GLO-90 tiles into
 # ~/.cache/tracking-sim (or $TRACKING_SIM_CACHE). Trackers use the radar's
 # detections; the passive sensor's bearings wait for fusion (milestone 6).
+# Every key, with its default: docs/configuration.md.
 name: kbjc-terrain
 origin: {lat: 39.9088, lon: -105.1172, alt_m: 1729}
 truth:

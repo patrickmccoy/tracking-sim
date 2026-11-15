@@ -2,6 +2,7 @@
 # velocity or a coordinated turn and may switch between them, so the
 # tracker can follow manoeuvres. Same association, initiation and deletion
 # as the baseline. Load with tracking_sim.tracking.load_tracker_spec.
+# Every key, with its default: docs/configuration.md.
 id: pf-mm-gnn
 filter: particle_mm
 motion:

@@ -5,6 +5,7 @@
 #
 # Paths are relative to this file. A minimal subset of the scenario format
 # in the design document; milestone 4 extends it.
+# Every key, with its default: docs/configuration.md.
 name: kbjc-synthetic
 origin: {lat: 39.9088, lon: -105.1172, alt_m: 1729}   # optional: defaults to the first sensor
 truth:

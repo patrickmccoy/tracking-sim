@@ -133,7 +133,7 @@ initiation: {min_points: 3, assumed_height_m: 5000, height_sigma_m: 3000}
 deletion: {missed_scans: 3}
 ```
 
-All trackers associate with global nearest neighbour and confirm a track after three detections. A 2D radar measures no height, so a new track starts at an assumed height above the antenna with a wide uncertainty; the height guess mostly shows up as ground-range error close to the radar. Detections reach the tracker one scan at a time in report order, each predicted to its own measurement time. Runs are reproducible: the particle filter's random draws are seeded from the run seed and the data, not from call order.
+All trackers associate with global nearest neighbour (the only association method so far; the notebook 05 walkthrough covers PDA, JPDA and MFA) and confirm a track after three detections. Every key of tracker, sensor and scenario files, with defaults and what to change for what effect, is in [docs/configuration.md](docs/configuration.md). A 2D radar measures no height, so a new track starts at an assumed height above the antenna with a wide uncertainty; the height guess mostly shows up as ground-range error close to the radar. Detections reach the tracker one scan at a time in report order, each predicted to its own measurement time. Runs are reproducible: the particle filter's random draws are seeded from the run seed and the data, not from call order.
 
 Scoring puts truth and tracks on a common grid (every scan end) and counts an aircraft only while the radar could see it, so no tracker is penalised for aircraft outside coverage or below the horizon. Tracks count from confirmation on. Metrics are on horizontal position:
 
@@ -614,7 +614,7 @@ Nothing site-specific lives in code. Hosts, ports, credentials and locations com
 | `TRACKING_SIM_MAP_STYLE` | `serve` | MapLibre style URL for the base map (default OpenFreeMap positron) |
 | `TRACKING_SIM_API` | `npm run dev` | Where the dev server sends `/api` (default http://127.0.0.1:8000) |
 
-Sensors, trackers and scenarios are YAML files (above; every field is validated, `${VAR}` references are expanded, and scenario paths are relative to the scenario file). Truth builder settings live in `TruthBuilderConfig` (a Pydantic model): segment gap, speed gate, default truth sigma, altitude preference, smoothing method, and whether to drop aircraft on the ground.
+Sensors, trackers and scenarios are YAML files ([docs/configuration.md](docs/configuration.md) lists every key; every field is validated, `${VAR}` references are expanded, and scenario paths are relative to the scenario file). Truth builder settings live in `TruthBuilderConfig` (a Pydantic model): segment gap, speed gate, default truth sigma, altitude preference, smoothing method, and whether to drop aircraft on the ground.
 
 ## Development
 

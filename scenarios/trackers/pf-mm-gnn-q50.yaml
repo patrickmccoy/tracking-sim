@@ -6,6 +6,7 @@
 # and lowered OSPA; on the synthetic hour it raised OSPA and lowered
 # completeness (DECISIONS.md, D33). Load with
 # tracking_sim.tracking.load_tracker_spec.
+# Every key, with its default: docs/configuration.md.
 id: pf-mm-gnn-q50
 filter: particle_mm
 motion:
