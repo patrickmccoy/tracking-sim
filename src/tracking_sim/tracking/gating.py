@@ -8,11 +8,12 @@ hopeless: a track 80 km away cannot take a detection here.
 
 ``PreGatedHypothesiser`` first extrapolates each track's mean to each
 detection's time, converts it to the detection's (bearing, slant range),
-and keeps only detections within a generous box: a fixed margin, plus three
-sigma of the track's horizontal position, plus what the fastest aircraft
-could cover in the time since the track's last state. The exact gate is
-still Stone Soup's Mahalanobis distance on the survivors, so as long as the
-box is wider than that gate the pre-gate changes speed, not results.
+and keeps only detections within a generous box: a fixed margin, plus
+``sigmas`` standard deviations of the track's horizontal position, plus
+what the fastest aircraft could cover in the time since the track's last
+state. The exact gate is still Stone Soup's on the survivors, so as long
+as the box is wider than that gate the pre-gate changes speed, not
+results; the factory sets ``sigmas`` a standard deviation beyond the gate.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ class PreGatedHypothesiser(Hypothesiser):  # type: ignore[misc]
     velocity_mapping: tuple[int, int, int] = Property(doc="vx, vy, vz indices in the state")
     margin_m: float = Property(default=2000.0, doc="Fixed part of the box half-width")
     max_speed_mps: float = Property(default=400.0, doc="Fastest target speed to allow for")
+    sigmas: float = Property(default=3.0, doc="Position standard deviations in the box")
 
     def hypothesise(self, track: Any, detections: Any, timestamp: Any, **kwargs: Any) -> Any:
         return self.hypothesiser.hypothesise(
@@ -53,7 +55,7 @@ class PreGatedHypothesiser(Hypothesiser):  # type: ignore[misc]
         vel = mean[list(self.velocity_mapping)]
         cov = np.asarray(state.covar, dtype=float)
         ix, iy = self.position_mapping[0], self.position_mapping[1]
-        spread = 3.0 * np.sqrt(max(cov[ix, ix], cov[iy, iy], 0.0))
+        spread = self.sigmas * np.sqrt(max(cov[ix, ix], cov[iy, iy], 0.0))
         t0 = state.timestamp
         dt = np.array([(d.timestamp - t0).total_seconds() for d in detections])
         predicted = pos[None, :] + dt[:, None] * vel[None, :]

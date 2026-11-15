@@ -241,3 +241,39 @@ def test_pre_gate_takes_a_track_or_a_bare_state() -> None:
     # Multi-frame assignment hypothesises per mixture component: a bare state, no track.
     assert gate.candidates(state, [near, far]) == {near}
     assert gate.candidates(Track([state]), [near, far]) == {near}
+
+
+def test_pre_gate_widens_with_the_gate() -> None:
+    from stonesoup.hypothesiser.distance import DistanceHypothesiser
+    from stonesoup.measures import Mahalanobis
+    from stonesoup.types.state import GaussianState
+    from stonesoup.updater.kalman import ExtendedKalmanUpdater
+
+    from tracking_sim.tracking.factory import pre_gate_sigmas
+    from tracking_sim.tracking.gating import PreGatedHypothesiser
+
+    assert pre_gate_sigmas(3.0) == 3.0 and pre_gate_sigmas(5.0) == 6.0
+    m = model()
+    pipe = build_tracker(tracker_spec("ekf-cv-gnn"))
+    state = GaussianState(
+        np.array([[0.0], [0], [50_000.0], [0], [5000.0], [0]]),
+        np.diag([1e6, 100, 1e6, 100, 1e4, 1]),  # 1 km sigma
+        timestamp=EPOCH,
+    )
+    # 5.5 km down range: 5.5 sigma, outside 2 km + 3 sigma, inside 2 km + 6 sigma.
+    far = Detection(np.array([[np.pi / 2], [55_500.0]]), timestamp=EPOCH, measurement_model=m)
+
+    def gate(sigmas: float) -> PreGatedHypothesiser:
+        exact = DistanceHypothesiser(
+            pipe.predictor, ExtendedKalmanUpdater(None), Mahalanobis(), missed_distance=5
+        )
+        return PreGatedHypothesiser(
+            hypothesiser=exact,
+            position_mapping=(0, 2, 4),
+            velocity_mapping=(1, 3, 5),
+            sigmas=sigmas,
+        )
+
+    assert gate(3.0).candidates(state, [far]) == set()
+    assert gate(pre_gate_sigmas(5.0)).candidates(state, [far]) == {far}
+    assert pipe.data_associator.hypothesiser.sigmas == 3.0

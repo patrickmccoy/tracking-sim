@@ -269,7 +269,7 @@ Choosing a gate:
 - A constant-velocity track lags a turning aircraft by more than its uncertainty admits, so `pda` and `jpda` usually want a wider gate.
 - Process noise widens the gate too, because a noisier motion model predicts with more uncertainty. That is why `pf-mm-gnn-q50` associates more false alarms (DECISIONS.md, D33).
 
-Before the exact test, a cheap geometric pre-gate drops detections that are plainly out of reach. Its box is 2 km, plus 3 sigma of the track's position, plus 400 m/s times the time since the track's last update. It changes speed, not results (D21).
+Before the exact test, a cheap geometric pre-gate drops detections that are plainly out of reach. Its box is 2 km, plus 3 standard deviations of the track's position (one more than `gate` when the gate is wider than 3), plus 400 m/s times the time since the track's last update. It changes speed, not results (D21).
 
 Nearest neighbour and multi-frame assignment (MFA) are not tracker options. Notebook 05 builds them, PDA and JPDA step by step on the same data.
 

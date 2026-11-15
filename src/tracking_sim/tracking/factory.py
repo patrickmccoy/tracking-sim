@@ -155,7 +155,18 @@ def _gated(spec: TrackerSpec, predictor: Any, updater: Any) -> PreGatedHypothesi
         ),
         position_mapping=layout.position,
         velocity_mapping=layout.velocity,
+        sigmas=pre_gate_sigmas(spec.association.gate),
     )
+
+
+def pre_gate_sigmas(gate: float) -> float:
+    """The pre-gate's width in position standard deviations: wider than ``gate``.
+
+    Three up to the default gate of 3, as before (the box's fixed margin
+    covers the rest); one more than a wider gate, so a wide PDA gate never
+    loses detections to the pre-gate.
+    """
+    return 3.0 if gate <= 3.0 else gate + 1.0
 
 
 def build_tracker(spec: TrackerSpec, *, seed: int = 0) -> TrackerPipeline:

@@ -278,6 +278,8 @@ extrapolated position in (bearing, slant range): 2 km, plus 3 sigma of the
 track's position, plus 400 m/s times the time since its last state. The
 exact gate is still Stone Soup's Mahalanobis distance, and a test shows
 identical tracks with and without the pre-gate (about 30x faster with).
+The box's sigma term follows the gate: 3 up to a gate of 3, and one more
+than a wider gate (added with PDA, whose gates are wider; D42).
 
 ## D22. Scoring: coverage-only truth on a scan grid, reported tracks only
 
