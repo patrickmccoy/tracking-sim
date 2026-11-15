@@ -1,5 +1,5 @@
 # The milestone 3 scenario: an hour of synthetic traffic around Rocky
-# Mountain Metropolitan Airport, one rotating 2D radar, three trackers.
+# Mountain Metropolitan Airport, one rotating 2D radar, six trackers.
 #
 #   uv run tracking-sim run scenarios/kbjc-synthetic.yaml --out runs/kbjc
 #
@@ -19,6 +19,8 @@ trackers:
   - trackers/ukf-cv-gnn.yaml
   - trackers/pf-mm-gnn.yaml
   - trackers/pf-mm-gnn-q50.yaml
+  - trackers/ekf-cv-pda.yaml
+  - trackers/ekf-cv-jpda.yaml
 seed: 42
 metrics:
   cutoff_m: 1000                  # OSPA/GOSPA cut-off

@@ -17,13 +17,20 @@ def test_example_scenario_loads() -> None:
     scenario = load_scenario(ROOT / "scenarios/kbjc-synthetic.yaml")
     assert scenario.spec.name == "kbjc-synthetic" and scenario.spec.seed == 42
     ids = [t.id for t in scenario.trackers]
-    assert ids == ["ekf-cv-gnn", "ukf-cv-gnn", "pf-mm-gnn", "pf-mm-gnn-q50"]
+    assert ids == [
+        "ekf-cv-gnn",
+        "ukf-cv-gnn",
+        "pf-mm-gnn",
+        "pf-mm-gnn-q50",
+        "ekf-cv-pda",
+        "ekf-cv-jpda",
+    ]
     assert [s.id for s in scenario.sensors] == ["radar-1"]
     assert scenario.truth_path == (ROOT / "tests/data/synthetic_1h.parquet").resolve()
     assert scenario.truth_path.exists()
     assert scenario.frame.lat == pytest.approx(39.9088)
     resolved = scenario.resolved()
-    assert resolved["sensors"][0]["id"] == "radar-1" and len(resolved["trackers"]) == 4
+    assert resolved["sensors"][0]["id"] == "radar-1" and len(resolved["trackers"]) == 6
 
 
 @pytest.fixture
@@ -65,6 +72,8 @@ def test_run_command_prints_the_comparison_and_writes_outputs(
     # In the scenario's order: the tracker files sorted by name.
     assert [t["tracker"] for t in metrics["trackers"]] == [
         "ekf-cv-gnn",
+        "ekf-cv-jpda",
+        "ekf-cv-pda",
         "pf-mm-gnn-q50",
         "pf-mm-gnn",
         "ukf-cv-gnn",
@@ -113,7 +122,7 @@ def test_terrain_example_scenario_loads() -> None:
     assert [s.type for s in scenario.sensors] == ["rotating_radar_2d", "passive_bearing"]
     assert scenario.spec.terrain is not None and scenario.spec.terrain.source == "copernicus"
     assert scenario.sensors[0].detection.model == "radar_equation"
-    assert len(scenario.trackers) == 4
+    assert len(scenario.trackers) == 6
 
 
 def test_with_truth_swaps_in_a_capture(small_scenario: Path, tmp_path: Path) -> None:

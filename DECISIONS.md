@@ -636,3 +636,42 @@ told apart from runs on the scenario's own traffic. Beside each recording
 are a summary (aircraft, span, extent) and up to 5000 sampled positions
 the map draws, to show where to put sensors. There is no delete in the UI:
 remove files from `data/captures/` by hand.
+
+## D42. PDA and JPDA association
+
+`association.method` is `gnn`, `pda` or `jpda`, and `gate` stays a
+Mahalanobis distance in standard deviations for all three, turned into
+Stone Soup's gate probability for PDA, so comparing association methods
+is a one-key diff. JPDA is Stone Soup's `JPDAwithEHM`, which gives exact
+JPDA answers faster.
+
+- **Kalman filters only.** PDA and JPDA run in `MultiTargetMixtureTracker`,
+  which merges each scan's weighted outcomes into one Gaussian; with the
+  particle filter that would collapse the cloud every scan. `particle_mm`
+  with `pda` or `jpda` fails at load time.
+- **Pd and clutter from the radar, per track.** Trackers now receive the
+  scenario's radar specs. False alarms are uniform over ground area, so in
+  (bearing, slant range) their density is `false_alarm_density` × range:
+  an average (as notebook 05 uses) overstates clutter near the radar by
+  several times and understates it far out. Pd is the constant model's,
+  or the radar equation's at the track's range for the default aircraft
+  class, since a tracker can't know each aircraft's size.
+  `prob_detect` and `clutter_density` fix them instead.
+- **One time per track.** Stone Soup predicts the missed-detection
+  hypothesis to the batch time (the scan's end) and each detection's to its
+  own; the mixture tracker then blends them, up to a scan apart (about a
+  kilometre at airliner speed). The hypothesiser predicts the missed
+  hypothesis to the gated detections' time, milliseconds from each other.
+- **Starting tracks stays GNN.** Tentative tracks use GNN with the same
+  gate; detections no confirmed track weighed above "no detection" start
+  them.
+- **The pre-gate widens with the gate** (D21), so a wide gate never loses
+  detections to it.
+- **Track tables** record, for a blended update, the detection it weighed
+  most, so false-track counts and the map's track-to-aircraft matching
+  work as for GNN.
+
+On the synthetic hour and the roof capture, PDA and JPDA score within a
+few per cent of GNN and of each other: clutter is light for what they are
+built for, and aircraft rarely compete for detections. The examples use a
+4σ gate, which held tracks together longer on the capture (PROGRESS.md).

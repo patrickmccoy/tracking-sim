@@ -4,7 +4,7 @@ Sensor and tracking simulation playground: replay real ADS-B traffic from Dump10
 
 You define a sensor (range, accuracy, scan rate, detection probability), place it on the map, and replay traffic past it. The output is detections, tracks, and scores against truth, so different filters can be compared on identical traffic.
 
-> **Status: milestones 1 to 5 are implemented.** Truth comes from Dump1090 SBS or readsb/dump1090-fa `aircraft.json`; a simulated rotating 2D radar turns an hour of traffic into realistic detections (noise, slant range, radar-equation Pd by aircraft size, unresolved targets, clutter, terrain masking from real elevation data); a passive bearing-only sensor runs alongside; three Stone Soup trackers (EKF, UKF, multiple-model particle filter) are scored with OSPA, GOSPA and SIAP; every run is stored once in an immutable run store; and a walkthrough notebook builds Stone Soup filters, motion models and data association (NN, GNN, PDA, JPDA, MFA) step by step on the same data, with a replay player for any aircraft. A map playground in the browser places and edits sensors, shows their coverage over terrain, runs scenarios, and replays truth, detections and tracks on a time slider, with two trackers side by side. See [PROGRESS.md](PROGRESS.md) for exactly what is done and what is next.
+> **Status: milestones 1 to 5 are implemented.** Truth comes from Dump1090 SBS or readsb/dump1090-fa `aircraft.json`; a simulated rotating 2D radar turns an hour of traffic into realistic detections (noise, slant range, radar-equation Pd by aircraft size, unresolved targets, clutter, terrain masking from real elevation data); a passive bearing-only sensor runs alongside; Stone Soup trackers (EKF, UKF and a multiple-model particle filter, with global nearest neighbour, PDA or JPDA association) are scored with OSPA, GOSPA and SIAP; every run is stored once in an immutable run store; and a walkthrough notebook builds Stone Soup filters, motion models and data association (NN, GNN, PDA, JPDA, MFA) step by step on the same data, with a replay player for any aircraft. A map playground in the browser places and edits sensors, shows their coverage over terrain, runs scenarios, and replays truth, detections and tracks on a time slider, with two trackers side by side. See [PROGRESS.md](PROGRESS.md) for exactly what is done and what is next.
 
 - [How it works](#how-it-works)
 - [Getting started](#getting-started)
@@ -115,25 +115,27 @@ detection:
 
 ### Trackers and scoring
 
-A tracker is a YAML spec naming each Stone Soup component, so comparing filters is a config diff on identical detections. Four examples live in [scenarios/trackers/](scenarios/trackers/):
+A tracker is a YAML spec naming each Stone Soup component, so comparing filters is a config diff on identical detections. Six examples live in [scenarios/trackers/](scenarios/trackers/):
 
-| Spec | Filter | Motion model | State |
-| --- | --- | --- | --- |
-| `ekf-cv-gnn` (baseline) | extended Kalman | constant velocity | `[x, vx, y, vy, z, vz]` |
-| `ukf-cv-gnn` | unscented Kalman | constant velocity | same |
-| `pf-mm-gnn` | multiple-model particle filter (1,000 particles) | constant velocity or coordinated turn | adds turn rate |
-| `pf-mm-gnn-q50` | the same, with process noise 50 instead of 1 | same | same |
+| Spec | Filter | Motion model | Association | State |
+| --- | --- | --- | --- | --- |
+| `ekf-cv-gnn` (baseline) | extended Kalman | constant velocity | global nearest neighbour, 3σ gate | `[x, vx, y, vy, z, vz]` |
+| `ukf-cv-gnn` | unscented Kalman | constant velocity | same | same |
+| `pf-mm-gnn` | multiple-model particle filter (1,000 particles) | constant velocity or coordinated turn | same | adds turn rate |
+| `pf-mm-gnn-q50` | the same, with process noise 50 instead of 1 | same | same | same |
+| `ekf-cv-pda` | extended Kalman | constant velocity | probabilistic data association (PDA), 4σ gate | `[x, vx, y, vy, z, vz]` |
+| `ekf-cv-jpda` | extended Kalman | constant velocity | joint PDA (JPDA), 4σ gate | same |
 
 ```yaml
 id: ekf-cv-gnn
 filter: ekf                      # ekf, ukf or particle_mm
 motion: {model: constant_velocity, acceleration_noise: 1.0, vertical_acceleration_noise: 0.1}
-association: {method: gnn, gate: 3.0}          # global nearest neighbour, Mahalanobis gate
+association: {method: gnn, gate: 3.0}          # gnn, pda or jpda; Mahalanobis gate
 initiation: {min_points: 3, assumed_height_m: 5000, height_sigma_m: 3000}
 deletion: {missed_scans: 3}
 ```
 
-All trackers associate with global nearest neighbour (the only association method so far; the notebook 05 walkthrough covers PDA, JPDA and MFA) and confirm a track after three detections. Every key of tracker, sensor and scenario files, with defaults and what to change for what effect, is in [docs/configuration.md](docs/configuration.md). A 2D radar measures no height, so a new track starts at an assumed height above the antenna with a wide uncertainty; the height guess mostly shows up as ground-range error close to the radar. Detections reach the tracker one scan at a time in report order, each predicted to its own measurement time. Runs are reproducible: the particle filter's random draws are seeded from the run seed and the data, not from call order.
+Global nearest neighbour gives each track at most one detection per scan. PDA updates a track with every detection in its gate, weighted by how likely each is to be the aircraft's, using the radar's probability of detection and clutter density at the track's range; JPDA shares detections out consistently among tracks competing for them. All trackers confirm a track after three detections. Every key of tracker, sensor and scenario files, with defaults and what to change for what effect, is in [docs/configuration.md](docs/configuration.md). A 2D radar measures no height, so a new track starts at an assumed height above the antenna with a wide uncertainty; the height guess mostly shows up as ground-range error close to the radar. Detections reach the tracker one scan at a time in report order, each predicted to its own measurement time. Runs are reproducible: the particle filter's random draws are seeded from the run seed and the data, not from call order.
 
 Scoring puts truth and tracks on a common grid (every scan end) and counts an aircraft only while the radar could see it, so no tracker is penalised for aircraft outside coverage or below the horizon. Tracks count from confirmation on. Metrics are on horizontal position:
 
@@ -153,9 +155,13 @@ ekf-cv-gnn      15.3      65     445   1532  1106     201    226      0.89   1.0
 ukf-cv-gnn      15.8      59     470   1653  1163     232    258      0.87   1.00      0.14        363     0.65         12      1
 pf-mm-gnn       23.8      56     542   1854  1255     320    278      0.82   1.00      0.16        415     0.67         15      1
 pf-mm-gnn-q50   23.2      39     573   1960  1002     484    475      0.73   1.00      0.26        372     0.68         15      0
+ekf-cv-pda      18.0      77     443   1505  1036     211    258      0.88   1.00      0.14        320     0.66         15      2
+ekf-cv-jpda     18.4      77     440   1491  1022     211    258      0.88   1.00      0.14        315     0.66         15      2
 ```
 
 The two particle trackers differ only in process noise. More noise keeps a particle cloud spread through turns, so tracks break up less, but it also widens the gate. On this synthetic hour that costs completeness and adds false tracks; on a real capture with more manoeuvring it halved the track fragments and lowered OSPA (DECISIONS.md, D33).
+
+PDA and JPDA land within a few per cent of global nearest neighbour here, and of each other: the clutter is light for what they are built for, and aircraft rarely compete for detections. Their wider gate holds tracks together longer on the real capture (D42).
 
 Each run is stored once in the **run store**, `runs/<name>-<hash>/`: the resolved configuration, a manifest, detections, every tracker's tracks (Parquet), `metrics.json` (summary and per-scan OSPA/GOSPA) and the table, all read-only. The hash covers the resolved scenario, the input data (truth, terrain, aircraft classes), the seed and the code (a digest of the package source and the Stone Soup, NumPy and SciPy versions), so running an identical scenario again reuses the stored run, and any change makes a new one. `tracking-sim runs list`, `runs show ID` and `runs compare A B` browse them; `--out DIR` writes a plain directory outside the store instead.
 
@@ -298,7 +304,7 @@ Try editing the radar spec (Pd, noise, clutter density, range, mast height) or s
 
 #### Notebook 03: tracking
 
-It runs `scenarios/kbjc-synthetic.yaml` (about a minute) and compares the three trackers on the same detections. You'll see:
+It runs `scenarios/kbjc-synthetic.yaml` (two or three minutes) and compares its trackers on the same detections. You'll see:
 
 1. The radar summary and the comparison table, with how to read each column.
 2. Each tracker's confirmed tracks over truth, with false tracks highlighted.

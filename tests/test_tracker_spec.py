@@ -17,9 +17,21 @@ def test_example_specs_load(path: Path) -> None:
     assert spec.id == path.stem
 
 
-def test_the_examples_are_the_milestone_3_trackers_and_a_variant() -> None:
+def test_the_examples_are_the_milestone_3_trackers_and_variants() -> None:
     specs = {p.stem: load_tracker_spec(p) for p in EXAMPLES}
-    assert set(specs) == {"ekf-cv-gnn", "ukf-cv-gnn", "pf-mm-gnn", "pf-mm-gnn-q50"}
+    assert set(specs) == {
+        "ekf-cv-gnn",
+        "ukf-cv-gnn",
+        "pf-mm-gnn",
+        "pf-mm-gnn-q50",
+        "ekf-cv-pda",
+        "ekf-cv-jpda",
+    }
+    # PDA and JPDA differ from the baseline only in association.
+    base = specs["ekf-cv-gnn"].model_dump(exclude={"id", "association"})
+    for name, method in (("ekf-cv-pda", "pda"), ("ekf-cv-jpda", "jpda")):
+        assert specs[name].model_dump(exclude={"id", "association"}) == base
+        assert specs[name].association.method == method and specs[name].association.gate == 4.0
     assert specs["ekf-cv-gnn"].filter == "ekf" and specs["ekf-cv-gnn"].ndim_state == 6
     assert specs["ukf-cv-gnn"].filter == "ukf"
     pf = specs["pf-mm-gnn"]

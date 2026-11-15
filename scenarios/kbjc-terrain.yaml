@@ -1,6 +1,6 @@
 # Milestone 4's realism in one scenario: real terrain, a radar behind the
 # first foothills ridge west of KBJC with radar-equation Pd, a passive
-# bearing-only sensor at KBJC, and the three trackers.
+# bearing-only sensor at KBJC, and the six trackers.
 #
 #   uv sync --extra terrain     # reading Copernicus DEM tiles
 #   uv run tracking-sim run scenarios/kbjc-terrain.yaml
@@ -47,4 +47,6 @@ trackers:
   - trackers/ukf-cv-gnn.yaml
   - trackers/pf-mm-gnn.yaml
   - trackers/pf-mm-gnn-q50.yaml
+  - trackers/ekf-cv-pda.yaml
+  - trackers/ekf-cv-jpda.yaml
 seed: 42

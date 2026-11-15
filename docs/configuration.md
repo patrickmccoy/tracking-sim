@@ -299,3 +299,5 @@ A 2D radar measures no height. A new track therefore starts at an assumed height
 | `ukf-cv-gnn` | `ukf` | `constant_velocity` | The baseline with an unscented filter. |
 | `pf-mm-gnn` | `particle_mm` | `cv_ct` | Follows turns. |
 | `pf-mm-gnn-q50` | `particle_mm` | `cv_ct` | `acceleration_noise: 50`: its particle cloud stays spread in turns, and its gate is wider. |
+| `ekf-cv-pda` | `ekf` | `constant_velocity` | The baseline with `pda` association and a 4σ gate. |
+| `ekf-cv-jpda` | `ekf` | `constant_velocity` | The baseline with `jpda` association and a 4σ gate. |

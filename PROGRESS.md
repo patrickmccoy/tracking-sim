@@ -368,6 +368,39 @@ Not done, for later:
   `ekf-cv-gnn`, run, replay (OSPA 510 m, completeness 0.81; truth for the
   replay took about 8 s to rebuild).
 
+## PDA and JPDA association
+
+Plan (approved): `association.method` takes `pda` and `jpda` as well as
+`gnn`, with one `gate` in standard deviations for all; Kalman filters only;
+Pd and clutter density from the scenario's radar per track; two example
+trackers in both KBJC scenarios. Done:
+
+- [x] Spec: `pda`, `jpda`, `prob_detect`, `clutter_density`.
+- [x] The pre-gate widens with the gate.
+- [x] `RadarPDAHypothesiser`: Pd and clutter density from the radar at each
+      track's range, and every hypothesis for a track at one time.
+- [x] Factory and runner: PDA or `JPDAwithEHM` in Stone Soup's
+      `MultiTargetMixtureTracker`; scenarios pass their radar specs.
+- [x] `ekf-cv-pda` and `ekf-cv-jpda` in both KBJC scenarios, docs, D42.
+
+Gate sweep, EKF with constant velocity, seed 42:
+
+| Tracker | Synthetic hour: OSPA m, tracks, longest | Roof capture, 21:50-22:00: OSPA m, tracks, longest |
+| --- | --- | --- |
+| GNN, gate 3 | 445, 65, 0.66 | 458, 299, 0.63 |
+| PDA, gate 3 | 447, 69, 0.64 | 454, 312, 0.62 |
+| PDA, gate 4 | 443, 77, 0.66 | 462, 243, 0.68 |
+| PDA, gate 5 | 480, 101, 0.70 | 477, 205, 0.69 |
+| JPDA, gate 3 | 447, 69, 0.64 | 454, 312, 0.62 |
+| JPDA, gate 4 | 440, 77, 0.66 | 461, 243, 0.68 |
+| JPDA, gate 5 | 480, 101, 0.70 | 471, 205, 0.70 |
+
+All within a few per cent of GNN, and run times about the same (17-18 s
+on the synthetic hour). Gate 4 was chosen for the examples: the best OSPA
+on the synthetic hour, and on the roof capture a fifth fewer track
+fragments and longer track segments for 1% more OSPA than gate 3. At gate
+5, extra false tracks cost more than the steadier tracks gain.
+
 ## Next: milestone 6, live and multi-sensor
 
 From the design: a live engine running behind real time on any streaming

@@ -1,0 +1,25 @@
+# The baseline with joint probabilistic data association: like ekf-cv-pda,
+# but tracks competing for the same detections share them out
+# consistently (Stone Soup's JPDAwithEHM). Pd and clutter
+# density come from the scenario's radar at each track's range. The gate is
+# wider than GNN's: a 4-sigma gate held tracks together longer on the roof
+# capture for about the same OSPA (DECISIONS.md, D42). Load with
+# tracking_sim.tracking.load_tracker_spec.
+# Every key, with its default: docs/configuration.md.
+id: ekf-cv-jpda
+filter: ekf                      # pda and jpda need ekf or ukf
+motion:
+  model: constant_velocity
+  acceleration_noise: 1.0        # m^2/s^3, horizontal
+  vertical_acceleration_noise: 0.1
+association:
+  method: jpda
+  gate: 4.0                      # Mahalanobis distance
+initiation:
+  min_points: 3                  # associated detections to confirm a track
+  assumed_height_m: 5000         # above the antenna: a 2D radar measures no height
+  height_sigma_m: 3000
+  speed_sigma_mps: 150
+  vertical_speed_sigma_mps: 10
+deletion:
+  missed_scans: 3
