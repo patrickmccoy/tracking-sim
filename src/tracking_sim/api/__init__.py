@@ -16,8 +16,11 @@ built map UI from ``web/dist``. Everything is under ``/api``:
 * ``GET /jobs`` and ``GET /jobs/{id}``: queued, running (with the stage),
   done or failed.
 * ``POST /coverage``: a sensor's coverage at given heights, as GeoJSON.
-* ``POST /elevation``: terrain heights at points (for a dropped sensor).
+* ``POST /elevation``: ground heights at points (for a dropped sensor).
 * ``POST /scenarios/export``: a scenario as a YAML file.
+* ``GET /captures``: uploaded captures, newest first; ``POST /captures``
+  uploads one (the body is the file); ``GET /captures/{id}/preview``
+  samples its positions (``api.captures``).
 
 Replay data is in latitude and longitude, one array per field
 (``api.replay``).

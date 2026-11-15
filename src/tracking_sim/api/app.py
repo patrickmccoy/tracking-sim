@@ -2,25 +2,29 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import yaml
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
+from starlette.concurrency import run_in_threadpool
 
 import tracking_sim
+from tracking_sim.api.captures import CaptureError, CaptureStore, check_upload
 from tracking_sim.api.jobs import JobRunner
 from tracking_sim.api.replay import RunData, RunDataCache
 from tracking_sim.config import load_yaml
@@ -56,7 +60,8 @@ class Settings:
     ``map_style`` is the MapLibre style URL the UI loads its base map from;
     the browser fetches the tiles itself. ``ground_terrain`` (a terrain
     spec) gives a placed sensor its ground height when the scenario has no
-    terrain of its own; ``None`` leaves the height to the user.
+    terrain of its own; ``None`` leaves the height to the user. Uploaded
+    captures are kept in ``captures_dir``, up to ``max_upload_bytes`` each.
     """
 
     scenarios_dir: Path
@@ -66,6 +71,8 @@ class Settings:
     ground_terrain: dict[str, Any] | None = field(
         default_factory=lambda: dict(DEFAULT_GROUND_TERRAIN)
     )
+    captures_dir: Path = Path("data/captures")
+    max_upload_bytes: int = 2 * 1024**3
 
 
 def _relative(path: Path, root: Path) -> str:
@@ -155,6 +162,7 @@ def create_app(settings: Settings) -> FastAPI:
         jobs.shutdown()
 
     replays = RunDataCache()
+    captures = CaptureStore(settings.captures_dir)
     terrains: dict[str, ElevationModel] = {}
 
     app = FastAPI(title="tracking-sim", version=tracking_sim.__version__, lifespan=lifespan)
@@ -163,6 +171,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.settings = settings
     app.state.store = store
     app.state.jobs = jobs
+    app.state.captures = captures
 
     def find_scenario(key: str) -> Path:
         path = scenario_files(root).get(key)
@@ -363,6 +372,57 @@ def create_app(settings: Settings) -> FastAPI:
         if job is None:
             raise HTTPException(404, f"no job {job_id!r}")
         return job.as_dict()
+
+    def capture_row(capture: Any) -> dict[str, Any]:
+        # A scenario names its truth relative to the scenarios directory.
+        return {**asdict(capture), "truth_path": _relative(Path(capture.path), root)}
+
+    @app.get("/api/captures")
+    def list_captures() -> list[dict[str, Any]]:
+        return [capture_row(c) for c in captures.list()]
+
+    @app.post("/api/captures", status_code=201)
+    async def upload_capture(request: Request, filename: str, tz: str = "UTC") -> dict[str, Any]:
+        """Store the request body, a recording or SBS capture, as a capture.
+
+        The body is the file itself (not a form), streamed to disk; ``tz``
+        is the zone of an SBS capture's timestamps.
+        """
+        try:
+            check_upload(filename, tz)
+        except CaptureError as exc:
+            raise HTTPException(422, str(exc)) from None
+        upload = captures.incoming() / uuid.uuid4().hex
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            with upload.open("wb") as out:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > settings.max_upload_bytes:
+                        raise HTTPException(
+                            413, f"uploads are limited to {settings.max_upload_bytes // 2**20} MB"
+                        )
+                    digest.update(chunk)
+                    out.write(chunk)
+            if size == 0:
+                raise HTTPException(422, "the upload is empty")
+            capture = await run_in_threadpool(
+                captures.add, upload, filename, digest.hexdigest(), tz=tz
+            )
+        except CaptureError as exc:
+            raise HTTPException(422, str(exc)) from None
+        finally:
+            upload.unlink(missing_ok=True)
+        return capture_row(capture)
+
+    @app.get("/api/captures/{capture_id}/preview")
+    def capture_preview(capture_id: str) -> dict[str, Any]:
+        """A sample of the capture's positions, for the map."""
+        preview = captures.preview(capture_id)
+        if preview is None:
+            raise HTTPException(404, f"no capture {capture_id!r}")
+        return preview
 
     if settings.web_dir is not None and (settings.web_dir / "index.html").exists():
         web = settings.web_dir

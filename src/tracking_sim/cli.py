@@ -309,7 +309,12 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             f"no built UI in {web} (cd web && npm ci && npm run build); serving the API only",
             file=sys.stderr,
         )
-    settings = Settings(scenarios_dir=args.scenarios, runs_dir=args.runs, web_dir=web)
+    settings = Settings(
+        scenarios_dir=args.scenarios,
+        runs_dir=args.runs,
+        web_dir=web,
+        captures_dir=args.captures,
+    )
     if args.map_style:
         settings = replace(settings, map_style=args.map_style)
     app = create_app(settings)
@@ -446,6 +451,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="scenario directory (default: scenarios, or TRACKING_SIM_SCENARIOS)",
     )
     _add_runs_option(serve)
+    serve.add_argument(
+        "--captures",
+        type=Path,
+        default=Path(_env("TRACKING_SIM_CAPTURES", "data/captures") or "data/captures"),
+        help="where uploaded captures are kept (default: data/captures, or TRACKING_SIM_CAPTURES)",
+    )
     serve.add_argument("--host", default=_env("TRACKING_SIM_HOST", "127.0.0.1"))
     serve.add_argument("--port", type=int, default=int(_env("TRACKING_SIM_PORT", "8000") or 8000))
     serve.add_argument("--web", type=Path, help="built UI directory (default: web/dist)")

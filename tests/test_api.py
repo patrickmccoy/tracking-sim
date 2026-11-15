@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from tracking_sim.api.app import Settings, create_app
 from tracking_sim.eval.runstore import RunStore
-from tracking_sim.sim.scenario import load_scenario, scenario_from_dict
+from tracking_sim.sim.scenario import load_scenario, load_truth, scenario_from_dict
 from tracking_sim.truth.sources.recording import write_records
 from tracking_sim.truth.synthetic import ReceiverConfig, generate_traffic
 
@@ -60,6 +60,7 @@ def client(workspace: Path) -> TestClient:
             scenarios_dir=workspace / "scenarios",
             runs_dir=workspace / "runs",
             ground_terrain=GROUND,
+            captures_dir=workspace / "captures",
         )
     )
     return TestClient(app)
@@ -243,3 +244,83 @@ def test_an_edited_scenario_exports_as_yaml(client: TestClient, workspace: Path)
         saved.unlink()
     doc["seed"] = -1
     assert client.post("/api/scenarios/export", json={"scenario": doc}).status_code == 422
+
+
+def _sbs_text(workspace: Path, tz: str) -> bytes:
+    from zoneinfo import ZoneInfo
+
+    from tracking_sim.truth.sources.recording import read_records
+    from tracking_sim.truth.sources.sbs import format_sbs_line
+
+    records = read_records(workspace / "data/truth.parquet")[:3000]
+    return "".join(format_sbs_line(r, tz=ZoneInfo(tz)) + "\r\n" for r in records).encode()
+
+
+def test_an_uploaded_sbs_capture_becomes_a_recording(client: TestClient, workspace: Path) -> None:
+    body = _sbs_text(workspace, "America/Denver")
+    response = client.post(
+        "/api/captures",
+        params={"filename": "roof capture.sbs", "tz": "America/Denver"},
+        content=body,
+    )
+    assert response.status_code == 201, response.text
+    capture = response.json()
+    assert capture["id"].startswith("roof-capture-") and capture["kind"] == "sbs"
+    assert capture["tz"] == "America/Denver" and capture["aircraft"] > 0
+    # Timestamps were Denver local time; stored in UTC, they match the truth.
+    assert capture["first"].startswith("2026-11-01T23:00")
+    west, south, east, north = capture["bbox"]
+    assert west < -105.1 < east and south < 39.9 < north
+    # A scenario names it relative to the scenarios directory.
+    assert capture["truth_path"] == f"../captures/{capture['id']}.parquet"
+    assert [c["id"] for c in client.get("/api/captures").json()] == [capture["id"]]
+    preview = client.get(f"/api/captures/{capture['id']}/preview").json()
+    assert 0 < len(preview["lat"]) == len(preview["lon"]) <= 5000
+    # The same bytes again are the same capture; another zone is another one.
+    again = client.post(
+        "/api/captures",
+        params={"filename": "roof capture.sbs", "tz": "America/Denver"},
+        content=body,
+    )
+    assert again.json()["id"] == capture["id"]
+    assert len(client.get("/api/captures").json()) == 1
+    assert not list((workspace / "captures/.incoming").iterdir())
+
+
+def test_a_scenario_runs_on_an_uploaded_recording(client: TestClient, workspace: Path) -> None:
+    data = (workspace / "data/truth.parquet").read_bytes()
+    capture = client.post("/api/captures", params={"filename": "mine.parquet"}, content=data).json()
+    assert capture["kind"] == "recording" and capture["tz"] is None
+    doc = client.get("/api/scenarios/small").json()["scenario"]
+    doc["truth"] = {**doc["truth"], "source": "recording", "path": capture["truth_path"]}
+    scenario = scenario_from_dict(doc, workspace / "scenarios")
+    assert scenario.truth_path == Path(capture["path"])
+    assert len(load_truth(scenario).segments) > 0
+
+
+def test_bad_uploads_are_refused(client: TestClient) -> None:
+    def upload(filename: str, body: bytes, tz: str = "UTC") -> Any:
+        return client.post("/api/captures", params={"filename": filename, "tz": tz}, content=body)
+
+    assert upload("notes.txt", b"x").status_code == 422
+    assert upload("c.sbs", b"x", tz="Mars/Olympus").status_code == 422
+    assert upload("c.sbs", b"").status_code == 422
+    assert "no records" in upload("c.sbs", b"not an sbs line\n").json()["detail"]
+    assert "can't read" in upload("c.parquet", b"not parquet").json()["detail"]
+    no_positions = (
+        b"MSG,4,1,1,A1B2C3,1,2026/11/01,23:00:00.000,2026/11/01,23:00:00.000,,,250,90,,,0,,,,,0\n"
+    )
+    assert "no aircraft positions" in upload("c.sbs", no_positions).json()["detail"]
+    assert client.get("/api/captures/nope/preview").status_code == 404
+
+
+def test_uploads_have_a_size_limit(workspace: Path, tmp_path: Path) -> None:
+    settings = Settings(
+        scenarios_dir=workspace / "scenarios",
+        runs_dir=workspace / "runs",
+        captures_dir=tmp_path,
+        max_upload_bytes=10,
+    )
+    client = TestClient(create_app(settings))
+    response = client.post("/api/captures", params={"filename": "c.sbs"}, content=b"x" * 100)
+    assert response.status_code == 413
