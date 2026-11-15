@@ -243,46 +243,46 @@ Six milestones, each ending in something runnable; milestones 1 to 3 give a work
 
 **Milestone 1: truth**
 
-- [ ] Repo scaffold, `PROGRESS.md`, `DECISIONS.md`, CI running tests and lint
-- [ ] `TruthRecord`, `TruthSource` protocol, `recording` adapter, and a fixture file
-- [ ] `sbs` adapter and the `record` CLI command
-- [ ] The SBS contract for exporters (`tools/README.md`)
-- [ ] Truth builder through to Stone Soup `GroundTruthPath`
+- [x] Repo scaffold, `PROGRESS.md`, `DECISIONS.md`, CI running tests and lint
+- [x] `TruthRecord`, `TruthSource` protocol, `recording` adapter, and a fixture file
+- [x] `sbs` adapter and the `record` CLI command
+- [x] The SBS contract for exporters (`tools/README.md`)
+- [x] Truth builder through to Stone Soup `GroundTruthPath`
 - [ ] Resolve the altitude reference question for planespotter
 
 Done when a notebook plots an hour of flights from both a receiver recording and a planespotter SBS export, and the same aircraft from both sources agree within the truth sigma.
 
 **Milestone 2: one sensor**
 
-- [ ] `SensorSpec` and YAML loading
-- [ ] Rotating 2D radar with beam-crossing timing, range and bearing noise, constant Pd, false alarms, radar horizon
-- [ ] Seeded replay engine
+- [x] `SensorSpec` and YAML loading
+- [x] Rotating 2D radar with beam-crossing timing, range and bearing noise, constant Pd, false alarms, radar horizon
+- [x] Seeded replay engine
 
 Done when detections plot over truth, achieved Pd matches the configured value within sampling error, and two runs with one seed are identical.
 
 **Milestone 3: tracking and metrics**
 
-- [ ] Tracker factory from config, with the baseline tracker
-- [ ] A second and third tracker (unscented, multiple-model) for comparison
-- [ ] OSPA, GOSPA, and SIAP metrics
+- [x] Tracker factory from config, with the baseline tracker
+- [x] A second and third tracker (unscented, multiple-model) for comparison
+- [x] OSPA, GOSPA, and SIAP metrics
 
 Done when one command runs a scenario with three trackers and prints a comparison table.
 
 **Milestone 4: scenarios and realism**
 
-- [ ] Scenario files and the immutable run store
-- [ ] Terrain masking from a DEM
-- [ ] Radar equation Pd with RCS classes
-- [ ] `aircraft_json` adapter, bringing geometric altitude and NACp
-- [ ] A second sensor type (passive bearing-only)
+- [x] Scenario files and the immutable run store
+- [x] Terrain masking from a DEM
+- [x] Radar equation Pd with RCS classes
+- [x] `aircraft_json` adapter, bringing geometric altitude and NACp
+- [x] A second sensor type (passive bearing-only)
 
 Done when moving a radar behind a ridge visibly removes low-altitude detections on that bearing.
 
 **Milestone 5: map playground**
 
-- [ ] FastAPI service over scenarios and runs
-- [ ] Map UI: place and edit sensors, show coverage, replay truth, detections, and tracks with a time slider
-- [ ] Side-by-side tracker comparison
+- [x] FastAPI service over scenarios and runs
+- [x] Map UI: place and edit sensors, show coverage, replay truth, detections, and tracks with a time slider
+- [x] Side-by-side tracker comparison
 
 Done when a sensor can be dropped on the map and a replay run from the browser with no file editing.
 
