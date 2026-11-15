@@ -531,3 +531,74 @@ With no clear winner, `pf-mm-gnn` keeps 1.0 and `pf-mm-gnn-q50` (identical
 but for the noise) joins both example scenarios, so every run compares
 them on the same detections. It adds about 25 s to a run of the
 synthetic hour.
+
+## D34. The map UI: React and TypeScript in `web/`, in this repo
+
+The design named React and MapLibre and left open whether the UI lives in
+this repo. It lives here, in `web/`, so a change to the scenario format
+and the UI change that goes with it land in one commit, and the API and
+its only client are tested together. It is TypeScript (strict) built with
+Vite; `tracking-sim serve` serves the built `web/dist`, and `npm run dev`
+proxies `/api` to it for development. The cost is a Node toolchain for
+anyone building the UI; the Python package and its tests don't need it,
+and CI checks the UI in its own job. A build-free page with MapLibre from
+a CDN was the alternative: simpler to install, but harder to keep in order
+at the size of the comparison view.
+
+## D35. Base map: OpenFreeMap, set at run time
+
+The default base map is OpenFreeMap's positron style: OpenStreetMap
+vector tiles with no key and no account, and a light, quiet style that
+keeps truth, detections and tracks readable. The style URL comes from
+`/api/config` (`serve --map-style` or `TRACKING_SIM_MAP_STYLE`), so another
+tile source needs no rebuild. The browser fetches tiles directly; the
+server never contacts the tile provider. Label layers borrow a font from
+whatever style is loaded, since glyph servers differ.
+
+## D36. The API: scenario documents, background jobs, local use
+
+- A scenario travels as JSON with every sensor and tracker inline and
+  paths relative to the scenarios directory, so the UI edits one document
+  and posts it back; the server validates it with the same Pydantic models
+  as the files, and returns their messages by field.
+- Runs are jobs on one worker thread, polled by the UI: a run of the
+  synthetic hour takes 20-90 s, too long for a request, and runs are
+  CPU-bound, so two at once only slow both. A scenario whose run is
+  stored returns at once; one already queued or running returns that job.
+  Jobs live in memory; the runs they make are in the run store.
+- The server is for one person on their own machine: no accounts, and it
+  listens on 127.0.0.1. A posted scenario can name any truth file the
+  server can read, which is fine on your own machine and a reason not to
+  expose it.
+
+## D37. Coverage from the simulator's own checks
+
+`sim.coverage` evaluates `GroundSensor.gate_checks` (range, sector,
+elevation limits, radar horizon, terrain) on a polar grid at each height,
+so the map shows exactly what the simulator applies rather than a second
+model of it. Heights are above the sensor site's ground, as the
+line-of-sight checks use. The grid is coarser than the simulator's terrain
+horizon (1 degree and range/400, against 0.1 degree and 100 m) so coverage
+redraws in a fraction of a second while a sensor is dragged; shadow edges
+are good to the grid step. Detection probability is not part of coverage.
+Neighbouring azimuths with identical visible ranges merge into one sector,
+and a full circle is a disc or annulus with no seam.
+
+## D38. Replay data: latitude and longitude, columnar, truth rebuilt
+
+The browser gets latitude and longitude, converted on the server, so it
+needs no geodesy; responses are one array per field and gzipped (an hour
+of detections is about 3 MB before compression). Truth is not stored with
+a run, as before (D25): the server rebuilds it from the run's truth file,
+checks its digest, and keeps the last four runs' truth in memory. What the
+map shows at a moment is computed in the browser by pure functions
+(`web/src/replay/frame.ts`), tested with vitest.
+
+## D39. Saving edited scenarios: the run store and a YAML download
+
+The server writes no scenario files. Every run keeps its full scenario in
+the run store, and **Edit this run** loads it back into the editor; **Save
+as YAML** downloads the edited scenario (validated, written by the server
+so it matches the hand-written files) for you to keep in `scenarios/`.
+A drafts directory the server writes to was the alternative; it would be a
+second place for scenarios to live, and nothing needed it yet.

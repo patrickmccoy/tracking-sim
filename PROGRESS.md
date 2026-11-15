@@ -307,21 +307,67 @@ they now use their own, `PF_Q = 50` (D31). For the scenario trackers,
 UKF notebook fixes led to the `ukf` tracker repairing negative
 covariances (D32); it never triggered on either dataset.
 
-## Next: milestone 5, map playground
+## Milestone 5: map playground
 
-From the design: a FastAPI service over scenarios and runs; a map UI to
-place and edit sensors, show coverage, and replay truth, detections and
-tracks with a time slider; side-by-side tracker comparison. Done when a
-sensor can be dropped on the map and a replay run from the browser with no
-file editing. Write the plan and get it approved before coding. Things
-milestone 4 leaves for it:
+Plan (approved at the start of the milestone, with React and TypeScript in
+`web/` in this repo, OpenFreeMap tiles, and saving through the run store
+plus a YAML download):
 
-- The run store (`eval.runstore`) is the natural backend for a runs API;
-  runs are immutable and addressed by id.
-- `TerrainHorizon.lowest_visible_height` gives coverage maps directly.
-- Scenarios accept inline specs, so the UI can write a scenario without
-  separate spec files.
-- Notebook tests now take a few minutes; worth trimming if CI time grows.
+1. FastAPI service over scenarios and runs (the `api` extra,
+   `tracking-sim serve`): read scenarios with specs inline, read runs; run
+   scenarios as background jobs; replay data in latitude and longitude, and
+   sensor coverage as GeoJSON.
+2. Map UI: scaffold and map; place and edit sensors with live coverage;
+   run and replay with a time slider.
+3. Side-by-side tracker comparison.
+4. Docs and the done check.
+
+Status:
+
+- [x] FastAPI service over scenarios and runs
+- [x] Map UI: place and edit sensors, show coverage, replay truth,
+      detections, and tracks with a time slider
+- [x] Side-by-side tracker comparison
+
+Done-when check, in a browser only: on `kbjc-synthetic`, switch off all
+but `ekf-cv-gnn`, click **+ Radar** and drop one north-west of Boulder,
+remove `radar-1`, press **Run this scenario**. The run took 24 s and
+opened as a replay showing the new radar's tracks over truth (OSPA 426 m,
+completeness 0.91). Checked in Chrome driven headless, with screenshots at
+each step; terrain coverage checked on `kbjc-terrain` (Copernicus tiles).
+
+Decisions are D34-D39. Along the way:
+
+- `run_scenario` and `RunStore.run` take a progress callback (job stages).
+- `GroundSensor.gate_checks` exposes the coverage checks as masks, so
+  `sim.coverage` draws exactly what the simulator applies.
+- `build_terrain`, `scenario_from_dict` and `scenario_from_resolved` came
+  out of `Scenario`, `load_scenario` and `load_run` for the API to use.
+- CI gains a `web` job (type check, vitest, build).
+
+Not done, for later:
+
+- Terrain can't be changed from the UI; a scenario's terrain comes from its
+  file. Editing tracker parameters is likewise left to the YAML files.
+- Truth is rebuilt for each run opened (about 2 s for the synthetic hour,
+  cached for the last four runs); a long capture will take longer.
+- A dropped sensor's ground height comes from the terrain when the scenario
+  has some; without terrain it copies the template's, so edit it by hand.
+
+## Next: milestone 6, live and multi-sensor
+
+From the design: a live engine running behind real time on any streaming
+source; the `beast` adapter; multiple sensors feeding one tracker, with
+fusion. Done when the map shows live simulated tracks from two sensors
+against live truth. Write the plan and get it approved before coding.
+Things milestone 5 leaves for it:
+
+- The map already draws truth, detections and tracks from columnar
+  latitude/longitude data (`api.replay`, `web/src/replay/frame.ts`); a live
+  feed can reuse those layers with a moving window instead of a stored run.
+- Trackers take radar detections only (D22); the bearing-only sensor's
+  detections are drawn but not fused.
+- Notebook tests take a few minutes; worth trimming if CI time grows.
 
 ## Notes for the next session
 

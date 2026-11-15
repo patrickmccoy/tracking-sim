@@ -4,10 +4,11 @@ Sensor and tracking simulation playground: replay real ADS-B traffic from Dump10
 
 You define a sensor (range, accuracy, scan rate, detection probability), place it on the map, and replay traffic past it. The output is detections, tracks, and scores against truth, so different filters can be compared on identical traffic.
 
-> **Status: milestones 1 to 4 are implemented.** Truth comes from Dump1090 SBS or readsb/dump1090-fa `aircraft.json`; a simulated rotating 2D radar turns an hour of traffic into realistic detections (noise, slant range, radar-equation Pd by aircraft size, unresolved targets, clutter, terrain masking from real elevation data); a passive bearing-only sensor runs alongside; three Stone Soup trackers (EKF, UKF, multiple-model particle filter) are scored with OSPA, GOSPA and SIAP; every run is stored once in an immutable run store; and a walkthrough notebook builds Stone Soup filters, motion models and data association (NN, GNN, PDA, JPDA, MFA) step by step on the same data, with a replay player for any aircraft. The map UI comes in milestone 5. See [PROGRESS.md](PROGRESS.md) for exactly what is done and what is next.
+> **Status: milestones 1 to 5 are implemented.** Truth comes from Dump1090 SBS or readsb/dump1090-fa `aircraft.json`; a simulated rotating 2D radar turns an hour of traffic into realistic detections (noise, slant range, radar-equation Pd by aircraft size, unresolved targets, clutter, terrain masking from real elevation data); a passive bearing-only sensor runs alongside; three Stone Soup trackers (EKF, UKF, multiple-model particle filter) are scored with OSPA, GOSPA and SIAP; every run is stored once in an immutable run store; and a walkthrough notebook builds Stone Soup filters, motion models and data association (NN, GNN, PDA, JPDA, MFA) step by step on the same data, with a replay player for any aircraft. A map playground in the browser places and edits sensors, shows their coverage over terrain, runs scenarios, and replays truth, detections and tracks on a time slider, with two trackers side by side. See [PROGRESS.md](PROGRESS.md) for exactly what is done and what is next.
 
 - [How it works](#how-it-works)
 - [Getting started](#getting-started)
+- [Map playground](#map-playground)
 - [Using your own data](#using-your-own-data)
 - [Command line](#command-line)
 - [Python API](#python-api)
@@ -29,14 +30,14 @@ Truth enters only through the outputs of a Dump1090-family decoder, so the frame
  └───────────────┘                 └───────────────┘          │        └──────────────┘             └──────────┘         └────────────────┘
                                                               └────────────── truth for scoring ──────────────────────────────────▲
        built                             built                              built                      built           metrics, runs
-                                                                                                                       built; UI: 5
+                                                                                                                       built; map built
 ```
 
 1. **Truth sources** emit canonical `TruthRecord`s. Every source implements the same `TruthSource` protocol (`replay(start, end)` and `stream()`), so a live Dump1090 feed, a captured SBS file and a recording are interchangeable.
 2. **The truth builder** turns sparse records into clean per-flight segments that can be sampled at any time.
 3. **The sensor simulator** samples those paths when each sensor's beam crosses each aircraft and emits noisy detections, misses and false alarms as Stone Soup `Detection`s.
 4. **Trackers** are Stone Soup pipelines assembled from YAML specs, all fed the same detections.
-5. **Scoring** compares tracks with the truth the sensors could see (OSPA, GOSPA, SIAP, track latency), and every run is kept in an immutable run store. *The map UI comes in milestone 5.*
+5. **Scoring** compares tracks with the truth the sensors could see (OSPA, GOSPA, SIAP, track latency), and every run is kept in an immutable run store. The map playground shows all of it in the browser.
 
 ### Truth sources
 
@@ -204,6 +205,7 @@ src/tracking_sim/
     engine.py            # ReplayEngine and SimulationResult (stats, tables, Parquet)
     scenario.py          # scenario files, run_scenario, ScenarioResult.write
     dataset.py           # TrackingData: truth + one radar's detections, simulated or from a stored run
+    coverage.py          # where a sensor can see, at a given height, as GeoJSON
   tracking/
     spec.py              # TrackerSpec: Pydantic models loaded from YAML
     factory.py           # Stone Soup components from a spec (EKF, UKF, particle MM)
@@ -217,6 +219,14 @@ src/tracking_sim/
     metrics.py           # OSPA, GOSPA, SIAP, latency, comparison table
     runstore.py          # the immutable run store
   viz/replay.py          # single-aircraft replay: map, errors, ipywidgets player
+  api/
+    app.py               # FastAPI: scenarios, runs, replay data, coverage (the api extra)
+    jobs.py              # scenario runs on a background worker
+    replay.py            # stored runs in latitude and longitude for the map
+web/                     # the map playground: React, TypeScript, Vite, MapLibre
+  src/map/               # map, layers, sensor markers, coverage
+  src/scenario/          # editable sensor fields and new-sensor templates
+  src/replay/            # replay frames, clock, time bar, comparison and OSPA chart
 notebooks/               # 01_truth_playground, 02_one_sensor, 03_tracking, 04_scenarios_and_terrain,
                          # 05_stone_soup_walkthrough
 scenarios/               # kbjc-synthetic.yaml, kbjc-terrain.yaml; sensors/ and trackers/ specs
@@ -225,7 +235,7 @@ scripts/make_fixture.py  # regenerates tests/data
 tests/                   # pytest suite; tests/data holds the synthetic fixture
 ```
 
-Later milestones add `api/` and more sensor models alongside these, as laid out in the [design document](Sensor_simulation_playground_design.md).
+Milestone 6 adds a live engine, the `beast` adapter and fusion alongside these, as laid out in the [design document](Sensor_simulation_playground_design.md).
 
 ## Getting started
 
@@ -336,6 +346,32 @@ uv run pytest
 
 > The fixture traffic is **synthetic**: generated by `tracking_sim.truth.synthetic` with a fixed seed to look like real decoder output, including its defects. It is good for learning the framework and for tests, not for drawing conclusions about real traffic.
 
+## Map playground
+
+A browser UI over the scenarios and the run store: drop a radar on the map, see what it can cover, run the scenario, and replay it.
+
+![The map playground comparing two trackers on the synthetic hour](docs/images/map-compare.png)
+
+It is a FastAPI service (the `api` extra) and a React and MapLibre app in `web/`, which needs [Node.js](https://nodejs.org/) 20 or newer to build:
+
+```sh
+uv sync --extra api --extra terrain     # the server (terrain: for scenarios with real terrain)
+cd web && npm ci && npm run build && cd ..
+uv run tracking-sim serve               # then open http://127.0.0.1:8000
+```
+
+What you can do:
+
+- **Edit a scenario.** Pick one of the files in `scenarios/`. Click **+ Radar** or **+ Passive sensor** and then the map to drop a sensor; drag it to move it (with terrain, its ground height follows). Select a sensor to edit its position, coverage, scan, accuracy and detection model; the server checks every value and shows its messages beside the fields. Switch trackers off to make runs faster, change the seed, or **Save as YAML** to keep the edited scenario as a file.
+- **See coverage.** Shaded areas show where an aircraft 1,000, 5,000 or 10,000 ft above the sensor's ground can be seen: range, sector, elevation limits, the radar horizon and terrain, from the same checks the simulator makes. It redraws as you drag.
+- **Run it.** **Run this scenario** runs it in the background (about 25 s per tracker for the synthetic hour) and opens the replay. A scenario that was run before opens at once from the run store; stored runs are listed to open directly.
+- **Replay.** Truth with trails, detections (and, if you like, false alarms) and one tracker's tracks, on a time slider with play, step-by-scan and speeds up to 120×. Click an aircraft or a track for its details. **Edit this run** loads the run's scenario back into the editor.
+- **Compare.** Two trackers side by side, from the same run or from two runs, on maps that move together, with OSPA over time for both and their metrics in a table.
+
+The server is meant for your own machine: it has no accounts and listens on 127.0.0.1. `--port`, `--scenarios`, `--runs` and `--map-style` (or the environment variables under [Configuration](#configuration)) change its defaults. The base map is [OpenFreeMap](https://openfreemap.org/)'s positron style, which needs no key; your browser fetches its tiles directly.
+
+To work on the UI, run `uv run tracking-sim serve` and, in `web/`, `npm run dev`: Vite serves the app on http://127.0.0.1:5173 with hot reload and passes `/api` to the server.
+
 ## Using your own data
 
 ### Record from a Dump1090 receiver
@@ -417,6 +453,7 @@ tracking-sim run SCENARIO          run a scenario into the run store (--seed N, 
 tracking-sim runs list             stored runs
 tracking-sim runs show ID          one run's manifest and results (ids or unique prefixes)
 tracking-sim runs compare A B      configuration and metric differences between two runs
+tracking-sim serve                 the map playground (needs the api extra and a built web/)
 ```
 
 Run `uv run tracking-sim <command> --help` for every option. `compare` exits non-zero when the sources disagree, so it can be scripted.
@@ -534,6 +571,10 @@ Nothing site-specific lives in code. Hosts, ports, credentials and locations com
 | `TRACKING_SIM_AIRCRAFT_JSON` | `record aircraft-json` | URL of `aircraft.json` |
 | `TRACKING_SIM_RUNS` | `run`, `runs`, notebook 05 | Run store directory (default `runs`) |
 | `TRACKING_SIM_CACHE` | terrain | Download cache (default `~/.cache/tracking-sim`) |
+| `TRACKING_SIM_SCENARIOS` | `serve` | Scenario directory (default `scenarios`) |
+| `TRACKING_SIM_HOST`, `TRACKING_SIM_PORT` | `serve` | Address to listen on (default 127.0.0.1:8000) |
+| `TRACKING_SIM_MAP_STYLE` | `serve` | MapLibre style URL for the base map (default OpenFreeMap positron) |
+| `TRACKING_SIM_API` | `npm run dev` | Where the dev server sends `/api` (default http://127.0.0.1:8000) |
 
 Sensors, trackers and scenarios are YAML files (above; every field is validated, `${VAR}` references are expanded, and scenario paths are relative to the scenario file). Truth builder settings live in `TruthBuilderConfig` (a Pydantic model): segment gap, speed gate, default truth sigma, altitude preference, smoothing method, and whether to drop aircraft on the ground.
 
@@ -546,9 +587,15 @@ uv run ruff check             # lint
 uv run ruff format            # format
 uv run mypy                   # strict type check of src/
 uv run python scripts/make_fixture.py   # regenerate tests/data (deterministic)
+
+cd web
+npm ci                        # the UI's pinned dependencies
+npm run typecheck             # TypeScript, strict
+npm test                      # vitest: scenario editing and replay maths
+npm run build                 # web/dist, which tracking-sim serve serves
 ```
 
-CI (GitHub Actions) runs lint and mypy, the core tests on Python 3.11 to 3.13 with **no extras**, and the full suite with all extras.
+CI (GitHub Actions) runs lint and mypy, the core tests on Python 3.11 to 3.13 with **no extras**, the full suite with all extras, and the UI's type check, tests and build.
 
 Conventions, from the design document:
 
@@ -567,7 +614,7 @@ Conventions, from the design document:
 | 2. One sensor | `SensorSpec` YAML, rotating 2D radar with beam-crossing timing, slant-range and bearing noise, Pd, resolution, false alarms and radar horizon; seeded replay engine; notebook. **Implemented.** |
 | 3. Tracking and metrics | Tracker specs and factory (EKF + GNN baseline, UKF, multiple-model particle filter); OSPA, GOSPA, SIAP and latency; `tracking-sim run` comparison table; notebook. **Implemented.** |
 | 4. Scenarios and realism | Scenario files and an immutable run store, terrain masking from Copernicus DEM tiles, radar-equation Pd with RCS classes, `aircraft_json` adapter, passive bearing-only sensor; notebook. **Implemented.** |
-| 5. Map playground | FastAPI service and a MapLibre map UI to place sensors and replay runs. |
+| 5. Map playground | FastAPI service over scenarios and runs; a React and MapLibre map to place and edit sensors with live coverage, run scenarios, replay them on a time slider, and compare two trackers side by side. **Implemented.** |
 | 6. Live and multi-sensor | Live engine, `beast` adapter, multi-sensor fusion. |
 
 ## License
