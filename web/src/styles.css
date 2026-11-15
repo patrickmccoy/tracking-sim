@@ -728,3 +728,60 @@ button.danger:hover:not(:disabled) {
     grid-template-rows: 1fr 1fr;
   }
 }
+
+/* The scenario's traffic: capture picker, window and upload. */
+.truth {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin: 10px 0;
+}
+
+/* Grid items keep their content's width unless told not to: a long capture
+   name or a date picker would push the sidebar wider. */
+.truth > *,
+.truth .field,
+.upload > * {
+  min-width: 0;
+}
+
+.truth .window {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.truth p {
+  margin: 0;
+}
+
+.truth input[type="datetime-local"] {
+  width: 100%;
+  min-width: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.truth select {
+  width: 100%;
+}
+
+.upload {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.upload input[type="file"] {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+}
+
+.upload progress {
+  flex: 1;
+  accent-color: var(--accent);
+}

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { ScenarioDoc, TrackerSpec } from "../api";
 import { NumberField } from "./NumberField";
 
@@ -8,12 +9,11 @@ interface ScenarioPanelProps {
   onChange: (draft: ScenarioDoc) => void;
   onReset: () => void;
   onSave: () => void;
+  /** The traffic controls (TruthPanel). */
+  truth: ReactNode;
 }
 
-const when = (w: [string, string] | null) =>
-  w ? w.map((t) => t.slice(0, 16).replace("T", " ")).join(" to ") + " UTC" : "all of it";
-
-export function ScenarioPanel({ draft, allTrackers, dirty, onChange, onReset, onSave }: ScenarioPanelProps) {
+export function ScenarioPanel({ draft, allTrackers, dirty, onChange, onReset, onSave, truth }: ScenarioPanelProps) {
   const enabled = new Set(draft.trackers.map((t) => t.id));
   const toggle = (tracker: TrackerSpec, on: boolean) =>
     onChange({
@@ -33,11 +33,8 @@ export function ScenarioPanel({ draft, allTrackers, dirty, onChange, onReset, on
           <NumberField label="Seed" value={draft.seed} min={0} step={1} digits={0} onChange={(v) => onChange({ ...draft, seed: Math.round(v) })} />
         </div>
       </div>
+      {truth}
       <dl className="facts">
-        <dt>Truth</dt>
-        <dd title={draft.truth.path}>{draft.truth.path.split("/").pop()}</dd>
-        <dt>Window</dt>
-        <dd>{when(draft.truth.window)}</dd>
         <dt>Terrain</dt>
         <dd>{draft.terrain ? String(draft.terrain.source) : "none (smooth earth)"}</dd>
       </dl>

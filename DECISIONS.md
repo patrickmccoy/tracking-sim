@@ -614,3 +614,23 @@ sets a number in the sensor spec: the scenario still runs on a smooth earth
 unless it names terrain. When the ground terrain is unavailable (no
 `terrain` extra, no network) `/api/elevation` returns nulls and the UI keeps
 the height it had. The elevation response says which terrain answered.
+
+## D41. Uploaded captures: stored as recordings, named by content
+
+The map takes a capture as the request body (not a form, so no
+`python-multipart` dependency, and the file streams to disk with a size
+limit, 2 GB by default). The server reads it once with the usual readers
+and stores it as a Parquet recording in `data/captures/`, git-ignored with
+the rest of `data/`. Converting SBS on upload applies its time zone once,
+so every later run reads a UTC recording and its digest is stable; a bad
+file fails at upload with the reader's message rather than at run time.
+The id is the file's name plus a hash of its bytes (and, for SBS, the
+zone), so uploading the same file again reuses it and a run's truth never
+changes underneath it. Picking a capture only changes the scenario's
+`truth`: the path is relative to the scenarios directory, so **Save as
+YAML** writes a usable scenario. The UI renames a scenario still carrying
+its file's name to `<name>-on-<capture>`, so stored runs on a capture are
+told apart from runs on the scenario's own traffic. Beside each recording
+are a summary (aircraft, span, extent) and up to 5000 sampled positions
+the map draws, to show where to put sensors. There is no delete in the UI:
+remove files from `data/captures/` by hand.

@@ -356,6 +356,18 @@ Not done, for later:
   after the milestone: without scenario terrain it comes from Copernicus
   GLO-90 (D40).
 
+## After milestone 5: your own traffic in the map
+
+- Docs: running a scenario on your own recording (README, "Run a scenario
+  on it").
+- A placed sensor's ground height comes from Copernicus GLO-90 when the
+  scenario has no terrain (D40).
+- Upload a capture in the map (SBS or a recording), run any scenario's
+  sensors and trackers on it, and replay it (D41). Checked in headless
+  Chrome on the 12 November roof capture: upload, a 3-minute window with
+  `ekf-cv-gnn`, run, replay (OSPA 510 m, completeness 0.81; truth for the
+  replay took about 8 s to rebuild).
+
 ## Next: milestone 6, live and multi-sensor
 
 From the design: a live engine running behind real time on any streaming

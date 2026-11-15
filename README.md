@@ -363,6 +363,7 @@ uv run tracking-sim serve               # then open http://127.0.0.1:8000
 What you can do:
 
 - **Edit a scenario.** Pick one of the files in `scenarios/`. Click **+ Radar** or **+ Passive sensor** and then the map to drop a sensor; drag it to move it. Its ground height follows the ground under it: the scenario's terrain if it has some, otherwise the Copernicus 90 m elevation map (the `terrain` extra; each 1-degree tile is downloaded once). Select a sensor to edit its position, coverage, scan, accuracy and detection model; the server checks every value and shows its messages beside the fields. Switch trackers off to make runs faster, change the seed, or **Save as YAML** to keep the edited scenario as a file.
+- **Use your own traffic.** Under **Traffic**, upload a Dump1090 SBS capture (`.sbs`, `.sbs.gz`, with the time zone of its timestamps) or a recording (`.parquet`, `.jsonl`), or pick one uploaded before. The scenario's sensors and trackers then run on it: the map moves to where its aircraft are and shows a sample of their positions, so you can place sensors under them, and **From** and **To** run part of it. Uploads are kept, as recordings, in `data/captures/` (`--captures`); the same file uploaded twice is stored once.
 - **See coverage.** Shaded areas show where an aircraft 1,000, 5,000 or 10,000 ft above the sensor's ground can be seen: range, sector, elevation limits, the radar horizon and terrain, from the same checks the simulator makes. It redraws as you drag.
 - **Run it.** **Run this scenario** runs it in the background (about 25 s per tracker for the synthetic hour) and opens the replay. A scenario that was run before opens at once from the run store; stored runs are listed to open directly.
 - **Replay.** Truth with trails, detections (and, if you like, false alarms) and one tracker's tracks, on a time slider with play, step-by-scan and speeds up to 120×. Click an aircraft or a track for its details. **Edit this run** loads the run's scenario back into the editor.
@@ -448,6 +449,8 @@ Put the sensors where your traffic is: sensors and origin are in latitude and lo
 uv run tracking-sim run data/scenarios/my-capture.yaml
 uv run tracking-sim serve --scenarios data/scenarios     # the map lists this directory's scenarios
 ```
+
+Or skip the file: in the map playground, upload the capture under **Traffic** and run any scenario's sensors and trackers on it (see [Map playground](#map-playground)).
 
 Things to expect:
 
@@ -606,6 +609,7 @@ Nothing site-specific lives in code. Hosts, ports, credentials and locations com
 | `TRACKING_SIM_RUNS` | `run`, `runs`, notebook 05 | Run store directory (default `runs`) |
 | `TRACKING_SIM_CACHE` | terrain | Download cache (default `~/.cache/tracking-sim`) |
 | `TRACKING_SIM_SCENARIOS` | `serve` | Scenario directory (default `scenarios`) |
+| `TRACKING_SIM_CAPTURES` | `serve` | Where uploaded captures are kept (default `data/captures`) |
 | `TRACKING_SIM_HOST`, `TRACKING_SIM_PORT` | `serve` | Address to listen on (default 127.0.0.1:8000) |
 | `TRACKING_SIM_MAP_STYLE` | `serve` | MapLibre style URL for the base map (default OpenFreeMap positron) |
 | `TRACKING_SIM_API` | `npm run dev` | Where the dev server sends `/api` (default http://127.0.0.1:8000) |

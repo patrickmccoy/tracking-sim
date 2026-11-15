@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   api,
+  type Capture,
   type Config,
   type RunRow,
   type ScenarioDoc,
@@ -14,16 +15,19 @@ import { ReplaySidebar } from "./components/ReplaySidebar";
 import { RunPanel } from "./components/RunPanel";
 import { ScenarioPanel } from "./components/ScenarioPanel";
 import { SensorForm } from "./components/SensorForm";
+import { TruthPanel } from "./components/TruthPanel";
 import { CoverageLayer } from "./map/CoverageLayer";
 import { MapClick } from "./map/MapClick";
 import { MapView } from "./map/MapView";
 import { SensorMarkers } from "./map/SensorMarkers";
+import { TrafficLayer } from "./map/TrafficLayer";
 import { useCoverage } from "./map/useCoverage";
 import { CompareView } from "./replay/CompareView";
 import { ReplayLayers, type LayerOptions, type Selection } from "./replay/ReplayLayers";
 import { TimeBar } from "./replay/TimeBar";
 import { useClock } from "./replay/useClock";
 import { useReplayData } from "./replay/useReplayData";
+import { nameFor } from "./scenario/names";
 import { newSensor } from "./scenario/templates";
 import { colors, coverageSteps } from "./theme";
 
@@ -55,6 +59,7 @@ export function App() {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [compare, setCompare] = useState<CompareChoice | null>(null);
   const [runs, setRuns] = useState<RunRow[]>([]);
+  const [captures, setCaptures] = useState<Capture[]>([]);
   const [layerOptions, setLayerOptions] = useState<LayerOptions>({
     truth: true,
     targets: true,
@@ -90,6 +95,13 @@ export function App() {
   useEffect(() => {
     if (key) load(key);
   }, [key, load]);
+
+  useEffect(() => {
+    api
+      .captures()
+      .then(setCaptures)
+      .catch(() => undefined); // an older server: no uploads
+  }, []);
 
   const openRun = (id: string) => {
     setRunId(id);
@@ -213,6 +225,8 @@ export function App() {
   };
 
   const sensor = selected === null ? null : draft?.sensors[selected] ?? null;
+  // The uploaded capture the draft's truth points at (by relative or absolute path).
+  const capture = draft ? (captures.find((c) => c.truth_path === draft.truth.path || c.path === draft.truth.path) ?? null) : null;
   const radars = draft?.sensors.filter((s) => s.type === "rotating_radar_2d").length ?? 0;
 
   return (
@@ -285,6 +299,16 @@ export function App() {
               onChange={setDraft}
               onReset={() => (key ? load(key) : loaded.key.startsWith("run:") && setDraft(structuredClone(loaded.scenario)))}
               onSave={save}
+              truth={
+                <TruthPanel
+                  truth={draft.truth}
+                  original={loaded.scenario.truth}
+                  captures={captures}
+                  active={capture}
+                  onChange={(truth, picked) => setDraft((d) => d && { ...d, truth, name: nameFor(d.name, loaded.scenario.name, picked) })}
+                  onUploaded={(c) => setCaptures((list) => [c, ...list.filter((x) => x.id !== c.id)])}
+                />
+              }
             />
             <h2>Sensors</h2>
             <ul className="plain sensor-list">
@@ -360,6 +384,7 @@ export function App() {
               visible={showCoverage}
               sensorId={replaying ? null : (sensor?.id ?? null)}
             />
+            {!replaying && capture && <TrafficLayer capture={capture} />}
             {replaying && (
               <ReplayLayers
                 truth={replay.truth}

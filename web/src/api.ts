@@ -161,6 +161,65 @@ export interface CoverageData {
   features: CoverageFeature[];
 }
 
+/** An uploaded capture, stored as a recording (src/tracking_sim/api/captures.py). */
+export interface Capture {
+  id: string;
+  name: string;
+  path: string; // absolute
+  truth_path: string; // relative to the scenarios directory, for truth.path
+  uploaded: string;
+  kind: "sbs" | "recording";
+  tz: string | null;
+  records: number;
+  aircraft: number;
+  positions: number;
+  first: string;
+  last: string;
+  bbox: [number, number, number, number]; // west, south, east, north
+}
+
+export interface CapturePreview {
+  lat: number[];
+  lon: number[];
+}
+
+/** File names an upload may have (the server checks too). */
+export const CAPTURE_SUFFIXES = [".parquet", ".pq", ".jsonl", ".ndjson", ".sbs", ".sbs.gz"];
+export const isSbs = (name: string) => /\.sbs(\.gz)?$/i.test(name);
+
+/**
+ * Upload a capture with progress. The body is the file itself; an SBS
+ * capture needs the zone of its timestamps. Returns the capture and a way
+ * to cancel.
+ */
+export function uploadCapture(
+  file: File,
+  tz: string,
+  onProgress: (fraction: number) => void,
+): { done: Promise<Capture>; cancel: () => void } {
+  const xhr = new XMLHttpRequest();
+  const done = new Promise<Capture>((resolve, reject) => {
+    const query = new URLSearchParams({ filename: file.name, tz });
+    xhr.open("POST", `/api/captures?${query}`);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    xhr.onload = () => {
+      let body: unknown = null;
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        // not JSON
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as Capture);
+      else reject(new ApiError(xhr.status, (body as { detail?: unknown } | null)?.detail ?? xhr.statusText));
+    };
+    xhr.onerror = () => reject(new Error("the upload failed"));
+    xhr.onabort = () => reject(new Error("upload cancelled"));
+    xhr.send(file);
+  });
+  return { done, cancel: () => xhr.abort() };
+}
+
 /** An error the server explained: `detail` is its message or validation errors. */
 export class ApiError extends Error {
   constructor(
@@ -227,6 +286,8 @@ export const api = {
     }
     return response.blob();
   },
+  captures: () => request<Capture[]>("/captures"),
+  capturePreview: (id: string) => request<CapturePreview>(`/captures/${encodeURIComponent(id)}/preview`),
   coverage: (
     sensor: SensorSpec,
     terrain: Record<string, unknown> | null,
