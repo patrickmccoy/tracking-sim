@@ -15,12 +15,15 @@ interface ReplaySidebarProps {
   t: number;
   onClose: () => void;
   onEdit: () => void;
+  /** Shown in place of the tracker table while comparing. */
+  compare?: React.ReactNode;
+  onCompare: () => void;
 }
 
 const fmt = (v: unknown, digits = 0) => (typeof v === "number" ? v.toFixed(digits) : "–");
 
 export function ReplaySidebar(props: ReplaySidebarProps) {
-  const { detail, tracker, onTracker, options, onOptions, selection, truth, tracks, t, onClose, onEdit } = props;
+  const { detail, tracker, onTracker, options, onOptions, selection, truth, tracks, t, onClose, onEdit, compare, onCompare } = props;
   const scenario = detail.manifest.scenario;
   const toggle = (key: keyof LayerOptions) => (e: React.ChangeEvent<HTMLInputElement>) =>
     onOptions({ ...options, [key]: e.target.checked });
@@ -31,6 +34,9 @@ export function ReplaySidebar(props: ReplaySidebarProps) {
         <button onClick={onClose}>← Back to editing</button>
         <button onClick={onEdit} title="Load this run's scenario into the editor">
           Edit this run
+        </button>
+        <button className={compare ? "primary" : ""} onClick={onCompare} title="Two trackers side by side">
+          {compare ? "Single view" : "Compare"}
         </button>
       </div>
       <h2>Run</h2>
@@ -47,31 +53,41 @@ export function ReplaySidebar(props: ReplaySidebarProps) {
         <dd>{detail.created.replace("T", " ").slice(0, 16)}</dd>
       </dl>
 
+      {compare ? (
+        <>
+          <h2>Compare</h2>
+          {compare}
+        </>
+      ) : (
+        <>
       <h2>Trackers</h2>
-      <table className="scores">
-        <thead>
-          <tr>
-            <th />
-            <th>tracker</th>
-            <th title="Mean OSPA, metres: lower is better">OSPA m</th>
-            <th title="SIAP completeness: share of truth tracked">compl.</th>
-            <th title="Tracks the tracker made">tracks</th>
-          </tr>
-        </thead>
-        <tbody>
-          {detail.metrics.trackers.map((s) => (
-            <tr key={s.tracker} className={s.tracker === tracker ? "active" : ""} onClick={() => onTracker(s.tracker)}>
-              <td>
-                <input type="radio" name="tracker" checked={s.tracker === tracker} onChange={() => onTracker(s.tracker)} />
-              </td>
-              <td>{s.tracker}</td>
-              <td className="num">{fmt(s.ospa_m)}</td>
-              <td className="num">{fmt(s.completeness, 2)}</td>
-              <td className="num">{fmt(s.tracks)}</td>
+        <table className="scores">
+          <thead>
+            <tr>
+              <th />
+              <th>tracker</th>
+              <th title="Mean OSPA, metres: lower is better">OSPA m</th>
+              <th title="SIAP completeness: share of truth tracked">compl.</th>
+              <th title="Tracks the tracker made">tracks</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {detail.metrics.trackers.map((s) => (
+              <tr key={s.tracker} className={s.tracker === tracker ? "active" : ""} onClick={() => onTracker(s.tracker)}>
+                <td>
+                  <input type="radio" name="tracker" checked={s.tracker === tracker} onChange={() => onTracker(s.tracker)} />
+                </td>
+                <td>{s.tracker}</td>
+                <td className="num">{fmt(s.ospa_m)}</td>
+                <td className="num">{fmt(s.completeness, 2)}</td>
+                <td className="num">{fmt(s.tracks)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+  
+        </>
+      )}
 
       <h2>Show</h2>
       <div className="grid2">

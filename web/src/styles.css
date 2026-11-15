@@ -581,3 +581,150 @@ button.danger:hover:not(:disabled) {
     flex-basis: 100%;
   }
 }
+
+.compare {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.compare-maps {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  background: var(--border);
+}
+
+.compare-pane {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.pane-label {
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.swatch.line {
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.compare-pick {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.compare-pick .swatch {
+  margin-top: 26px;
+}
+
+.compare-pick .field + .field {
+  margin-top: 6px;
+}
+
+.compare-pick select {
+  width: 100%;
+}
+
+.compare-table td.better {
+  font-weight: 700;
+}
+
+.compare-table tr {
+  cursor: default;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.chart {
+  background: var(--surface-1);
+  border-top: 1px solid var(--border);
+  padding: 8px 12px 0;
+}
+
+.chart-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.legend-inline {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-item .value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+}
+
+.chart-svg {
+  display: block;
+  width: 100%;
+  cursor: crosshair;
+}
+
+.chart-svg .grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.chart-svg .tick {
+  fill: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-svg .cursor {
+  stroke: var(--text-primary);
+  stroke-width: 1.5;
+}
+
+.chart-svg .crosshair {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+@media (max-width: 760px) {
+  .compare-maps {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+}

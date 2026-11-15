@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type Config, type ScenarioDoc, type ScenarioEntry, type ScenarioResponse, type SensorSpec } from "./api";
+import {
+  api,
+  type Config,
+  type RunRow,
+  type ScenarioDoc,
+  type ScenarioEntry,
+  type ScenarioResponse,
+  type SensorSpec,
+} from "./api";
+import { ComparePanel, type CompareChoice } from "./components/ComparePanel";
 import { CoverageLegend } from "./components/CoverageLegend";
 import { ReplaySidebar } from "./components/ReplaySidebar";
 import { RunPanel } from "./components/RunPanel";
@@ -10,6 +19,7 @@ import { MapClick } from "./map/MapClick";
 import { MapView } from "./map/MapView";
 import { SensorMarkers } from "./map/SensorMarkers";
 import { useCoverage } from "./map/useCoverage";
+import { CompareView } from "./replay/CompareView";
 import { ReplayLayers, type LayerOptions, type Selection } from "./replay/ReplayLayers";
 import { TimeBar } from "./replay/TimeBar";
 import { useClock } from "./replay/useClock";
@@ -43,6 +53,8 @@ export function App() {
   const [runId, setRunId] = useState<string | null>(null);
   const [tracker, setTracker] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [compare, setCompare] = useState<CompareChoice | null>(null);
+  const [runs, setRuns] = useState<RunRow[]>([]);
   const [layerOptions, setLayerOptions] = useState<LayerOptions>({
     truth: true,
     targets: true,
@@ -85,13 +97,30 @@ export function App() {
     setShowCoverage(false);
   };
 
-  const replay = useReplayData(runId, tracker ? [tracker] : []);
+  const sameRun = compare !== null && compare.runId === runId;
+  const replay = useReplayData(runId, [tracker, sameRun ? compare.tracker : null].filter((x): x is string => !!x));
+  const replayB = useReplayData(compare && !sameRun ? compare.runId : null, compare && !sameRun && compare.tracker ? [compare.tracker] : []);
+  const dataB = sameRun ? replay : replayB;
+  // A run picked for B starts on its first tracker.
+  useEffect(() => {
+    if (compare && !compare.tracker && dataB.detail) {
+      setCompare({ ...compare, tracker: dataB.detail.metrics.trackers[0]?.tracker ?? "" });
+    }
+  }, [compare, dataB.detail]);
+
+  const toggleCompare = () => {
+    if (compare) return setCompare(null);
+    const trackers = replay.detail?.metrics.trackers.map((s) => s.tracker) ?? [];
+    setCompare({ runId: runId!, tracker: trackers.find((x) => x !== tracker) ?? tracker ?? "" });
+    api.runs().then((r) => setRuns(r.reverse())).catch(() => undefined);
+  };
   const runScenario = replay.detail?.manifest.scenario ?? null;
   const window = replay.truth?.window ?? null;
   const clock = useClock(window);
   useEffect(() => {
     setSelection(null);
     setTracker(null);
+    setCompare(null);
   }, [runId]);
   useEffect(() => {
     if (replay.detail && !tracker) setTracker(replay.detail.metrics.trackers[0]?.tracker ?? null);
@@ -223,6 +252,23 @@ export function App() {
             t={clock.t}
             onClose={() => setRunId(null)}
             onEdit={editRun}
+            onCompare={toggleCompare}
+            compare={
+              compare && (
+                <ComparePanel
+                  runs={runs}
+                  a={{ detail: replay.detail, tracker }}
+                  b={{ runId: compare.runId, detail: dataB.detail, tracker: compare.tracker }}
+                  onA={setTracker}
+                  onB={setCompare}
+                  onSwap={() => {
+                    setCompare({ runId: compare.runId, tracker });
+                    setTracker(compare.tracker);
+                  }}
+                  colors={[colors.trackA, colors.trackB]}
+                />
+              )
+            }
           />
         )}
         {!replaying && draft && loaded && (
@@ -279,7 +325,28 @@ export function App() {
         )}
       </aside>
       <main className="main">
-        {config && loaded && draft && (
+        {config && replaying && compare && runScenario && window && tracker && (
+          <CompareView
+            mapStyle={config.map_style}
+            center={[runScenario.frame.lon, runScenario.frame.lat]}
+            sides={[
+              { label: `A: ${tracker}`, tracker, color: colors.trackA, data: replay },
+              {
+                label: `B: ${compare.tracker}${sameRun ? "" : ` (${compare.runId.slice(0, 24)}…)`}`,
+                tracker: compare.tracker,
+                color: colors.trackB,
+                data: dataB,
+              },
+            ]}
+            t={clock.t}
+            window={window}
+            options={layerOptions}
+            selection={selection}
+            onSelect={setSelection}
+            onSeek={clock.setT}
+          />
+        )}
+        {config && loaded && draft && !(replaying && compare) && (
           <MapView
             styleUrl={config.map_style}
             center={replaying && runScenario ? [runScenario.frame.lon, runScenario.frame.lat] : [loaded.frame.lon, loaded.frame.lat]}
@@ -322,7 +389,7 @@ export function App() {
             </button>
           </div>
         )}
-        {draft && (
+        {draft && !(replaying && compare) && (
           <CoverageLegend
             sensorId={replaying ? null : (sensor?.id ?? null)}
             heights={heights}
