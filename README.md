@@ -419,7 +419,41 @@ export TRACKING_SIM_WINDOW=2026-11-01T23:00Z,2026-11-02T00:00Z   # optional
 uv run jupyter lab notebooks/01_truth_playground.ipynb
 ```
 
-The same variables run the later notebooks on your traffic: notebook 02 replays it past the example radar, notebook 03 runs its scenario's sensors and trackers on it, and notebook 04 uses it for the terrain, radar-equation and passive-sensor sections. SBS captures carry no ADS-B emitter category, so in notebook 04 every aircraft gets the default RCS class; record with `record aircraft-json` to keep the category. From the command line, point a copy of a scenario's `truth.path` at the recording instead.
+The same variables run the later notebooks on your traffic: notebook 02 replays it past the example radar, notebook 03 runs its scenario's sensors and trackers on it, and notebook 04 uses it for the terrain, radar-equation and passive-sensor sections. SBS captures carry no ADS-B emitter category, so in notebook 04 every aircraft gets the default RCS class; record with `record aircraft-json` to keep the category.
+
+### Run a scenario on it
+
+A scenario's `truth` names the traffic it replays; to run sensors and trackers on your own recording, write a scenario whose `truth.path` points at it. Keep it in `data/` with the recording (both are git-ignored), and reuse the example sensor and tracker files by relative path:
+
+```yaml
+# data/scenarios/my-capture.yaml
+name: my-capture
+origin: {lat: 39.9088, lon: -105.1172, alt_m: 1729}   # the local frame; optional
+truth:
+  source: recording                 # a .parquet / .jsonl recording; or sbs for .sbs / .sbs.gz text
+  path: ../2026-11-01.parquet       # relative to this file
+  # tz: America/Denver              # sbs only: the zone of its timestamps
+  # window: ["2026-11-01T23:00:00Z", "2026-11-01T23:30:00Z"]   # optional: part of it
+sensors:
+  - ../../scenarios/sensors/radar-1.yaml
+trackers:
+  - ../../scenarios/trackers/ekf-cv-gnn.yaml
+  - ../../scenarios/trackers/pf-mm-gnn.yaml
+seed: 42
+```
+
+Put the sensors where your traffic is: sensors and origin are in latitude and longitude, so move them (or draw new ones in the [map playground](#map-playground)) if your receiver is far from the examples. Then run it from the command line or open it in the map:
+
+```sh
+uv run tracking-sim run data/scenarios/my-capture.yaml
+uv run tracking-sim serve --scenarios data/scenarios     # the map lists this directory's scenarios
+```
+
+Things to expect:
+
+- Run time grows with the traffic: a busy 15 minutes takes about as long as the synthetic hour. Use `window` to try a slice first.
+- Aircraft that never report an altitude are left out (the run summary counts them), and ADS-B is not perfect truth: its own position errors and gaps count against the trackers, so scores come out somewhat worse than on synthetic traffic.
+- If replay times are hours off, the recording's time zone was wrong: SBS timestamps are the receiver host's clock, so `--tz` must be that host's zone (`UTC` if the host runs on UTC). Tracking scores don't depend on it; times shown and comparisons with other sources do.
 
 Section 5 compares against a second source for the same hour: another receiver's recording or capture, or an SBS export from another system (below). Without one, the notebook stops there for your own recording.
 
