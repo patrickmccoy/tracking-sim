@@ -296,12 +296,15 @@ Done when the map shows live simulated tracks from two sensors against live trut
 
 ## Open questions
 
-None of these block milestone 1, but the first three should be settled during it.
+Still open:
 
-- [ ] Is planespotter's stored altitude barometric or geometric? Expected barometric; verify as described under Truth quality
-- [ ] Which Dump1090 fork and output formats does the receiver run, and in which time zone does it write SBS timestamps?
+- [ ] Is planespotter's stored altitude barometric or geometric? Expected barometric. The comparison tooling exists; the verdict waits on an SBS exporter in the planespotter repository and an hour recorded alongside it (DECISIONS.md D10, PROGRESS.md "closing milestone 1 on real data").
+- [ ] Which Dump1090 fork and output formats does the receiver run, and in which time zone does it write SBS timestamps? A roof capture converted with `--tz America/Denver` came out 7 hours late, which suggests the receiver writes UTC; confirm before milestone 6, since live truth must line up with the wall clock and the `beast` adapter depends on the fork.
 - [ ] Final project name (working name: tracking-sim, package tracking\_sim)
-- [ ] Licence, if the repo will be public
-- [ ] Is the 30 m default truth sigma reasonable for local traffic? Check against real NACp values in milestone 4
-- [ ] Which DEM source and resolution for terrain masking?
-- [ ] Should the map UI live in this repo or a separate one?
+
+Settled:
+
+- [x] Licence: MIT (`LICENSE`).
+- [x] Truth sigma: `aircraft_json` truth takes each segment's sigma from its median NACp (D28), so the 30 m default only applies to SBS, which carries no NACp.
+- [x] DEM: Copernicus, GLO-90 by default with GLO-30 as an option (D26).
+- [x] Map UI: in this repo, in `web/` (D34).
