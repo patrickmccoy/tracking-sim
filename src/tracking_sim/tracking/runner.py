@@ -21,7 +21,7 @@ one seed produce identical tables.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -31,10 +31,12 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from stonesoup.types.detection import Clutter, Detection, TrueDetection
+from stonesoup.types.multihypothesis import MultipleHypothesis
 from stonesoup.types.track import Track
 from stonesoup.types.update import Update
 
 from tracking_sim.sensors.radar import ScanResult
+from tracking_sim.sensors.spec import RotatingRadar2DSpec
 from tracking_sim.tracking.factory import build_tracker
 from tracking_sim.tracking.spec import TrackerSpec
 
@@ -91,7 +93,7 @@ class TrackerRun:
             for state in track.states:
                 mean = np.asarray(state.mean, dtype=float).ravel()
                 covar = np.asarray(state.covar, dtype=float)
-                detection = state.hypothesis.measurement if isinstance(state, Update) else None
+                detection = _main_detection(state)
                 rows["tracker_id"].append(self.tracker_id)
                 rows["track_id"].append(label)
                 rows["timestamp"].append(state.timestamp)
@@ -117,6 +119,20 @@ class TrackerRun:
         out.parent.mkdir(parents=True, exist_ok=True)
         pq.write_table(self.tracks_table(), out)
         return out
+
+
+def _main_detection(state: Any) -> Detection | None:
+    """The detection an update used: for PDA and JPDA, the most likely of those it blended."""
+    if not isinstance(state, Update):
+        return None
+    hypothesis = state.hypothesis
+    if isinstance(hypothesis, MultipleHypothesis):
+        weighted = [h for h in hypothesis if h]  # leave out "no detection"
+        if not weighted:
+            return None
+        hypothesis = max(weighted, key=lambda h: h.probability)
+    detection: Detection | None = hypothesis.measurement
+    return detection
 
 
 _TRACK_SCHEMA = pa.schema(
@@ -152,9 +168,19 @@ def _confirmation_time(track: Track, min_points: int) -> datetime:
     return last
 
 
-def run_tracker(spec: TrackerSpec, batches: Sequence[DetectionBatch], *, seed: int) -> TrackerRun:
-    """Run one tracker over ``batches`` and collect all its tracks."""
-    pipeline = build_tracker(spec, seed=seed)
+def run_tracker(
+    spec: TrackerSpec,
+    batches: Sequence[DetectionBatch],
+    *,
+    seed: int,
+    radars: Mapping[str, RotatingRadar2DSpec] | None = None,
+) -> TrackerRun:
+    """Run one tracker over ``batches`` and collect all its tracks.
+
+    ``radars`` are the specs of the radars that made the detections, by
+    sensor id: PDA and JPDA take Pd and clutter density from them.
+    """
+    pipeline = build_tracker(spec, seed=seed, radars=radars)
     adapted = [(t, pipeline.adapt(dets)) for t, dets in batches]
     tracker = pipeline.make_tracker(adapted)
     seen: dict[int, Track] = {}

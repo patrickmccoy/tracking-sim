@@ -431,7 +431,8 @@ def run_scenario(
     simulation = engine.run(start, end)
     # Trackers take radar detections only: bearing-only sensors need fusion
     # (milestone 6). They are scored on what the radars could see.
-    radars = [s.id for s in scenario.sensors if isinstance(s, RotatingRadar2DSpec)]
+    radar_specs = {s.id: s for s in scenario.sensors if isinstance(s, RotatingRadar2DSpec)}
+    radars = list(radar_specs)
     if scenario.trackers and not radars:
         raise ValueError("trackers need at least one rotating_radar_2d sensor")
     grid = scoring_grid(truth, simulation, sensor_ids=radars)
@@ -443,7 +444,7 @@ def run_scenario(
     scores: list[TrackerScore] = []
     for i, spec in enumerate(scenario.trackers, start=1):
         report(f"tracker {spec.id} ({i} of {len(scenario.trackers)})")
-        run = run_tracker(spec, batches, seed=scenario.spec.seed)
+        run = run_tracker(spec, batches, seed=scenario.spec.seed, radars=radar_specs)
         log.info("%s: %d tracks, %.1f s", spec.id, len(run.tracks), run.elapsed_s)
         runs.append(run)
         scores.append(score_run(run, grid, settings=scenario.metric_settings))

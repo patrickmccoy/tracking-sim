@@ -77,3 +77,69 @@ def test_tracks_parquet_round_trip(simulation: SimulationResult, tmp_path: Path)
     path = run.write(tmp_path / "tracks" / "ukf.parquet")
     assert pq.read_table(path).equals(run.tracks_table())
     assert run.elapsed_s > 0
+
+
+def radar() -> Any:
+    return load_sensor_spec(ROOT / "scenarios/sensors/radar-1.yaml")
+
+
+def probabilistic(method: str, filter: str = "ekf", **association: Any) -> Any:
+    from tracking_sim.tracking.spec import parse_tracker_spec
+
+    data = tracker("ekf-cv-gnn").model_dump()
+    data.update(
+        id=f"{filter}-{method}",
+        filter=filter,
+        association={"method": method, "gate": 4.0, **association},
+    )
+    return parse_tracker_spec(data)
+
+
+@pytest.mark.parametrize("method", ["pda", "jpda"])
+def test_probabilistic_association_tracks_aircraft(
+    method: str, simulation: SimulationResult
+) -> None:
+    batches = detection_batches(simulation.scans)
+    radars = {"radar-1": radar()}
+    run = run_tracker(probabilistic(method), batches, seed=1, radars=radars)
+    table = run.tracks_table()
+    assert len(run.reported_tracks()) >= 3
+    # Updates record the detection they leaned on most, as GNN's do.
+    hits = table.filter(pc.equal(table["detection_kind"], "target"))
+    assert pc.count_distinct(hits["segment_id"]).as_py() >= 3
+    again = run_tracker(probabilistic(method), batches, seed=1, radars=radars)
+    assert table.equals(again.tracks_table())
+    ukf = run_tracker(probabilistic(method, "ukf"), batches, seed=1, radars=radars)
+    assert len(ukf.reported_tracks()) >= 3
+
+
+def test_jpda_matches_pda_on_an_isolated_aircraft(simulation: SimulationResult) -> None:
+    # One aircraft's detections and no clutter: nothing for tracks to share.
+    scans = simulation.scans
+    segment = max(
+        {d.metadata.get("segment_id") for s in scans for d in s.detections} - {None},
+        key=lambda seg: sum(
+            d.metadata.get("segment_id") == seg for s in scans for d in s.detections
+        ),
+    )
+    batches = [
+        (t, {d for d in dets if d.metadata.get("segment_id") == segment})
+        for t, dets in detection_batches(scans)
+    ]
+    radars = {"radar-1": radar()}
+    pda = run_tracker(probabilistic("pda"), batches, seed=1, radars=radars)
+    jpda = run_tracker(probabilistic("jpda"), batches, seed=1, radars=radars)
+    assert len(pda.reported_tracks()) >= 1
+    columns = ["east_m", "north_m", "sigma_h_m"]
+    a, b = pda.tracks_table().select(columns), jpda.tracks_table().select(columns)
+    assert a.num_rows == b.num_rows
+    for name in columns:
+        assert a[name].to_pylist() == pytest.approx(b[name].to_pylist(), rel=1e-9, abs=1e-6)
+
+
+def test_probabilistic_association_needs_the_radars(simulation: SimulationResult) -> None:
+    batches = detection_batches(simulation.scans)
+    with pytest.raises(ValueError, match="needs the scenario's radars"):
+        run_tracker(probabilistic("pda"), batches, seed=1)
+    fixed = probabilistic("pda", prob_detect=0.9, clutter_density=1e-5)
+    assert run_tracker(fixed, batches, seed=1).tracks

@@ -143,3 +143,18 @@ def test_with_truth_swaps_in_a_capture(small_scenario: Path, tmp_path: Path) -> 
     assert scenario.with_truth(sbs, window=window).spec.truth.window == window
     with pytest.raises(ValueError, match="end after"):
         scenario.with_truth(sbs, window=(window[1], window[0]))
+
+
+def test_probabilistic_trackers_get_the_scenarios_radar(small_scenario: Path) -> None:
+    from tracking_sim.sim.scenario import run_scenario
+
+    data = yaml.safe_load(small_scenario.read_text())
+    data["trackers"] = [
+        {"id": "pda", "filter": "ekf", "association": {"method": "pda", "gate": 4.0}},
+        {"id": "jpda", "filter": "ukf", "association": {"method": "jpda", "gate": 4.0}},
+    ]
+    small_scenario.write_text(yaml.safe_dump(data))
+    result = run_scenario(load_scenario(small_scenario))
+    assert [s.tracker_id for s in result.scores] == ["pda", "jpda"]
+    for score in result.scores:
+        assert score.mean_ospa_m < 1000 and score.siap["completeness"] > 0.5

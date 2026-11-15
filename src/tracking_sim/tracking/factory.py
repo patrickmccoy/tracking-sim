@@ -20,6 +20,11 @@ one detection at an assumed height (``SlantRangeInitiator``), run on an
 extended Kalman filter with the same motion model, and are confirmed after
 ``min_points`` updates. The particle tracker samples particles only then.
 
+Association is global nearest neighbour, or PDA / JPDA (``tracking.
+probabilistic``), which blend every detection in a track's gate and so run
+in Stone Soup's ``MultiTargetMixtureTracker``; they need the scenario's
+radar specs for Pd and clutter density. Tentative tracks always use GNN.
+
 Detections carry the 6D slant-range model the sensor built. A 7D tracker
 needs the same model mapped to its own state, which ``adapt`` provides
 (``tracking.adapt.DetectionAdapter``).
@@ -27,12 +32,13 @@ needs the same model mapped to its own state, which ``adapt`` provides
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 from stonesoup.dataassociator.neighbour import GNNWith2DAssignment
+from stonesoup.dataassociator.probability import PDA, JPDAwithEHM
 from stonesoup.deleter.time import UpdateTimeStepsDeleter
 from stonesoup.hypothesiser.distance import DistanceHypothesiser
 from stonesoup.initiator.simple import MultiMeasurementInitiator
@@ -46,12 +52,13 @@ from stonesoup.models.transition.linear import (
 from stonesoup.models.transition.nonlinear import ConstantTurn
 from stonesoup.predictor.kalman import ExtendedKalmanPredictor, UnscentedKalmanPredictor
 from stonesoup.resampler.particle import ESSResampler
-from stonesoup.tracker.simple import MultiTargetTracker
+from stonesoup.tracker.simple import MultiTargetMixtureTracker, MultiTargetTracker
 from stonesoup.types.array import CovarianceMatrix, StateVector
 from stonesoup.types.detection import Detection
 from stonesoup.types.state import GaussianState
 from stonesoup.updater.kalman import ExtendedKalmanUpdater, UnscentedKalmanUpdater
 
+from tracking_sim.sensors.spec import RotatingRadar2DSpec
 from tracking_sim.tracking.adapt import DetectionAdapter
 from tracking_sim.tracking.gating import PreGatedHypothesiser
 from tracking_sim.tracking.initiators import ParticleConvertingInitiator, SlantRangeInitiator
@@ -60,9 +67,14 @@ from tracking_sim.tracking.particle import (
     SeededMultiModelPredictor,
     SeededSystematicResampler,
 )
+from tracking_sim.tracking.probabilistic import (
+    RadarModel,
+    RadarPDAHypothesiser,
+    gate_probability,
+)
 from tracking_sim.tracking.spec import TrackerSpec
 
-__all__ = ["TrackerPipeline", "build_tracker"]
+__all__ = ["TrackerPipeline", "build_tracker", "pre_gate_sigmas"]
 
 
 @dataclass(frozen=True)
@@ -96,9 +108,17 @@ class TrackerPipeline:
     def ndim_state(self) -> int:
         return self.spec.ndim_state
 
-    def make_tracker(self, detector: Iterable[tuple[Any, set[Detection]]]) -> MultiTargetTracker:
-        """A Stone Soup ``MultiTargetTracker`` reading ``(time, detections)`` batches."""
-        return MultiTargetTracker(
+    def make_tracker(self, detector: Iterable[tuple[Any, set[Detection]]]) -> Any:
+        """A Stone Soup tracker reading ``(time, detections)`` batches.
+
+        ``MultiTargetTracker`` for GNN; ``MultiTargetMixtureTracker`` for PDA
+        and JPDA, which reduces each track's weighted outcomes to one
+        Gaussian per scan.
+        """
+        kind = (
+            MultiTargetMixtureTracker if self.spec.association.probabilistic else MultiTargetTracker
+        )
+        return kind(
             initiator=self.initiator,
             deleter=self.deleter,
             detector=detector,
@@ -169,15 +189,52 @@ def pre_gate_sigmas(gate: float) -> float:
     return 3.0 if gate <= 3.0 else gate + 1.0
 
 
-def build_tracker(spec: TrackerSpec, *, seed: int = 0) -> TrackerPipeline:
+def _probabilistic(
+    spec: TrackerSpec,
+    predictor: Any,
+    updater: Any,
+    radars: Mapping[str, RotatingRadar2DSpec],
+) -> Any:
+    """A PDA or JPDA associator, its gate and parameters from the spec and radars."""
+    a = spec.association
+    if not radars and (a.prob_detect is None or a.clutter_density is None):
+        raise ValueError(
+            f"tracker {spec.id!r}: {a.method} association needs the scenario's radars "
+            "(or both prob_detect and clutter_density)"
+        )
+    layout = LAYOUT_6D  # PDA and JPDA run on the Kalman filters only
+    hypothesiser = PreGatedHypothesiser(
+        hypothesiser=RadarPDAHypothesiser(
+            predictor,
+            updater,
+            clutter_spatial_density=None,
+            prob_detect=0.9,  # replaced per track
+            prob_gate=gate_probability(a.gate),
+            radars={sid: RadarModel(r) for sid, r in radars.items()},
+            position_mapping=layout.position,
+            fixed_prob_detect=a.prob_detect,
+            fixed_clutter_density=a.clutter_density,
+        ),
+        position_mapping=layout.position,
+        velocity_mapping=layout.velocity,
+        sigmas=pre_gate_sigmas(a.gate),
+    )
+    return JPDAwithEHM(hypothesiser) if a.method == "jpda" else PDA(hypothesiser)
+
+
+def build_tracker(
+    spec: TrackerSpec,
+    *,
+    seed: int = 0,
+    radars: Mapping[str, RotatingRadar2DSpec] | None = None,
+) -> TrackerPipeline:
     """Assemble the Stone Soup components ``spec`` describes.
 
     ``seed`` feeds the particle filter's random draws (the Kalman filters
     have none). Each draw is seeded from it and from the content it is for,
     so the result does not depend on the order Stone Soup visits tracks.
+    ``radars`` (by sensor id) give PDA and JPDA their Pd and clutter density.
     """
-    if spec.association.probabilistic:
-        raise NotImplementedError(f"association {spec.association.method!r} is not wired up yet")
     layout = LAYOUT_7D if spec.ndim_state == 7 else LAYOUT_6D
 
     # Tentative tracks: an EKF with the tracker's own state layout.
@@ -251,7 +308,11 @@ def build_tracker(spec: TrackerSpec, *, seed: int = 0) -> TrackerPipeline:
         spec=spec,
         predictor=predictor,
         updater=updater,
-        data_associator=GNNWith2DAssignment(_gated(spec, predictor, updater)),
+        data_associator=(
+            _probabilistic(spec, predictor, updater, radars or {})
+            if spec.association.probabilistic
+            else GNNWith2DAssignment(_gated(spec, predictor, updater))
+        ),
         initiator=initiator,
         deleter=UpdateTimeStepsDeleter(spec.deletion.missed_scans),
         position_mapping=layout.position,
