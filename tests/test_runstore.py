@@ -107,7 +107,7 @@ def test_a_failed_run_leaves_nothing_behind(
 ) -> None:
     import tracking_sim.sim.scenario as scenario_module
 
-    def broken(_: Any) -> Any:
+    def broken(_: Any, **kwargs: Any) -> Any:
         raise RuntimeError("boom")
 
     monkeypatch.setattr(scenario_module, "run_scenario", broken)
@@ -182,3 +182,9 @@ def test_aircraft_classes_csv_is_a_run_input(tmp_path: Path) -> None:
     assert scenario.aircraft_classes() == {"abc123": "heavy"}
     rid, manifest = RunStore(tmp_path / "runs").plan(scenario)
     assert rid != base and len(manifest["inputs"]["aircraft_classes"]) == 64
+
+
+def test_progress_reports_each_stage(tmp_path: Path) -> None:
+    stages: list[str] = []
+    RunStore(tmp_path / "runs").run(load_scenario(scenario_file(tmp_path)), progress=stages.append)
+    assert stages == ["truth", "sensors", "tracker ekf (1 of 1)"]

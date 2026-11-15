@@ -106,3 +106,37 @@ def test_the_built_ui_is_served_for_any_other_path(workspace: Path, tmp_path: Pa
     assert client.get("/assets/app.js").text == "console.log(1)"
     assert client.get("/api/nothing").status_code == 404
     assert client.get("/api/health").json()["ok"]
+
+
+def test_a_posted_scenario_runs_in_the_background(workspace: Path, tmp_path: Path) -> None:
+    app = create_app(Settings(scenarios_dir=workspace / "scenarios", runs_dir=tmp_path / "runs"))
+    client = TestClient(app)
+    doc = client.get("/api/scenarios/small").json()["scenario"]
+    # Move the radar, as the map would.
+    doc["sensors"][0]["position"]["lat"] += 0.05
+    job = client.post("/api/runs", json={"scenario": doc}).json()
+    assert job["state"] in ("queued", "running") and job["run_id"].startswith("small-")
+    # The same scenario again while it runs is the same job.
+    assert client.post("/api/runs", json={"scenario": doc}).json()["id"] == job["id"]
+    app.state.jobs.wait()
+    done = client.get(f"/api/jobs/{job['id']}").json()
+    assert done["state"] == "done" and not done["reused"] and done["error"] is None
+    run = client.get(f"/api/runs/{job['run_id']}").json()
+    assert run["manifest"]["scenario"]["sensors"][0]["position"]["lat"] == pytest.approx(39.9588)
+    # Once stored, it is reused at once.
+    again = client.post("/api/runs", json={"scenario": doc}).json()
+    assert again["state"] == "done" and again["reused"] and again["run_id"] == job["run_id"]
+    assert [j["id"] for j in client.get("/api/jobs").json()] == [again["id"], job["id"]]
+    assert client.get("/api/jobs/nope").status_code == 404
+
+
+def test_a_bad_scenario_is_rejected_with_reasons(client: TestClient) -> None:
+    doc = client.get("/api/scenarios/small").json()["scenario"]
+    bad = {**doc, "sensors": [{**doc["sensors"][0], "scan": {"period_s": -1}}]}
+    response = client.post("/api/runs", json={"scenario": bad})
+    assert response.status_code == 422
+    (error,) = response.json()["detail"]
+    assert "period_s" in error["loc"]
+    missing = {**doc, "truth": {**doc["truth"], "path": "nowhere.parquet"}}
+    response = client.post("/api/runs", json={"scenario": missing})
+    assert response.status_code == 422 and "nowhere.parquet" in response.json()["detail"]

@@ -31,6 +31,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
@@ -197,8 +198,11 @@ class RunStore:
         ]
         return sorted(runs, key=lambda r: (r.manifest["created"], r.id))
 
-    def run(self, scenario: Any) -> RunRecord:
-        """Run ``scenario`` unless an identical run is stored, and return the stored run."""
+    def run(self, scenario: Any, *, progress: Callable[[str], None] | None = None) -> RunRecord:
+        """Run ``scenario`` unless an identical run is stored, and return the stored run.
+
+        ``progress`` is passed to ``run_scenario``.
+        """
         from tracking_sim.sim.scenario import run_scenario
 
         rid, manifest = self.plan(scenario)
@@ -208,7 +212,7 @@ class RunStore:
             record.reused = True
             return record
 
-        result = run_scenario(scenario)
+        result = run_scenario(scenario, progress=progress)
         self.root.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=f".{rid}-", dir=self.root))
         try:

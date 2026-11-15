@@ -9,6 +9,10 @@ built map UI from ``web/dist``. Everything is under ``/api``:
 ``GET /api/scenarios/{key}``    one scenario, every sensor and tracker inline
 ``GET /api/runs``               stored runs, oldest first, with headline scores
 ``GET /api/runs/{id}``          one run's manifest and metrics
+``POST /api/runs``              run a scenario in the background: a job
+``GET /api/jobs``               jobs since the server started, newest first
+``GET /api/jobs/{id}``          one job: queued, running (and its stage),
+                                done or failed
 ==============================  =============================================
 
 The server is for one person on their own machine: it has no accounts and

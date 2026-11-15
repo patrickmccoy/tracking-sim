@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -391,13 +392,22 @@ def load_truth(scenario: Scenario) -> TruthSet:
     return build_truth(records, scenario.frame, TruthBuilderConfig())
 
 
-def run_scenario(scenario: Scenario) -> ScenarioResult:
-    """Build truth, simulate the sensors once, run and score every tracker."""
+def run_scenario(
+    scenario: Scenario, *, progress: Callable[[str], None] | None = None
+) -> ScenarioResult:
+    """Build truth, simulate the sensors once, run and score every tracker.
+
+    ``progress``, if given, is called with a short description as each
+    stage starts ("truth", "sensors", "tracker ekf-cv-gnn (1 of 3)").
+    """
+    report = progress or (lambda stage: None)
     timings: dict[str, float] = {}
+    report("truth")
     started = time.perf_counter()
     truth = load_truth(scenario)
     timings["truth"] = time.perf_counter() - started
 
+    report("sensors")
     started = time.perf_counter()
     window = scenario.spec.truth.window
     start, end = (window[0], window[1]) if window else (None, None)
@@ -421,7 +431,8 @@ def run_scenario(scenario: Scenario) -> ScenarioResult:
 
     runs: list[TrackerRun] = []
     scores: list[TrackerScore] = []
-    for spec in scenario.trackers:
+    for i, spec in enumerate(scenario.trackers, start=1):
+        report(f"tracker {spec.id} ({i} of {len(scenario.trackers)})")
         run = run_tracker(spec, batches, seed=scenario.spec.seed)
         log.info("%s: %d tracks, %.1f s", spec.id, len(run.tracks), run.elapsed_s)
         runs.append(run)
