@@ -140,3 +140,53 @@ def test_a_bad_scenario_is_rejected_with_reasons(client: TestClient) -> None:
     missing = {**doc, "truth": {**doc["truth"], "path": "nowhere.parquet"}}
     response = client.post("/api/runs", json={"scenario": missing})
     assert response.status_code == 422 and "nowhere.parquet" in response.json()["detail"]
+
+
+def test_replay_data_is_in_latitude_and_longitude(client: TestClient) -> None:
+    (row,) = client.get("/api/runs").json()
+    run = row["id"]
+    truth = client.get(f"/api/runs/{run}/truth", params={"step_s": 10}).json()
+    lo, hi = truth["window"]
+    assert hi - lo == 120 and truth["segments"]
+    for seg in truth["segments"]:
+        assert lo <= seg["t"][0] < seg["t"][-1] <= hi
+        assert len(seg["t"]) == len(seg["lat"]) == len(seg["lon"]) == len(seg["alt_m"])
+        assert all(
+            abs(lat - 39.9) < 2 and abs(lon + 105.1) < 2
+            for lat, lon in zip(seg["lat"], seg["lon"], strict=True)
+        )
+    assert client.get(f"/api/runs/{run}/truth", params={"step_s": 0}).status_code == 422
+
+    det = client.get(f"/api/runs/{run}/detections").json()
+    n = len(det["t"])
+    assert n > 100 and all(len(v) == n for v in det.values())
+    assert det["t"] == sorted(det["t"])
+    assert {"target", "clutter"} == set(det["kind"])
+    ids = {s["id"] for s in truth["segments"]}
+    assert {s for s, k in zip(det["segment_id"], det["kind"], strict=True) if k == "target"} <= ids
+
+    tracks = client.get(f"/api/runs/{run}/tracks/ekf").json()["tracks"]
+    assert tracks and all(len(t["t"]) == len(t["lat"]) for t in tracks)
+    assert all(all(t["confirmed"]) for t in tracks)
+    every = client.get(f"/api/runs/{run}/tracks/ekf", params={"tentative": True}).json()
+    assert sum(len(t["t"]) for t in every["tracks"]) > sum(len(t["t"]) for t in tracks)
+    assert any(t["segment_id"] in ids for t in tracks)
+    assert client.get(f"/api/runs/{run}/tracks/nope").status_code == 404
+
+
+def test_coverage_for_a_dragged_sensor(client: TestClient) -> None:
+    sensor = client.get("/api/scenarios/small").json()["scenario"]["sensors"][0]
+    ridge = {
+        "source": "synthetic",
+        "ridge": {"lat": 39.9088, "lon": -105.19, "height_m": 900, "base_m": 1729},
+    }
+    flat = client.post("/api/coverage", json={"sensor": sensor, "heights_m": [300, 3000]}).json()
+    assert [f["properties"]["height_m"] for f in flat["features"]] == [300, 3000]
+    hilly = client.post(
+        "/api/coverage", json={"sensor": sensor, "terrain": ridge, "heights_m": [300, 3000]}
+    ).json()
+    for a, b in zip(flat["features"], hilly["features"], strict=True):
+        assert b["properties"]["area_km2"] < a["properties"]["area_km2"]
+    bad = {**sensor, "coverage": {**sensor["coverage"], "range_max_m": -1}}
+    assert client.post("/api/coverage", json={"sensor": bad}).status_code == 422
+    assert client.post("/api/coverage", json={"sensor": sensor, "heights_m": []}).status_code == 422

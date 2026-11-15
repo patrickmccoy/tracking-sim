@@ -11,15 +11,26 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
 import tracking_sim
 from tracking_sim.api.jobs import JobRunner
+from tracking_sim.api.replay import RunData, RunDataCache
 from tracking_sim.config import load_yaml
 from tracking_sim.eval.runstore import RunRecord, RunStore
-from tracking_sim.sim.scenario import Scenario, load_scenario, scenario_from_dict
+from tracking_sim.geo.terrain import ElevationModel
+from tracking_sim.sensors.spec import parse_sensor_spec
+from tracking_sim.sim.coverage import coverage
+from tracking_sim.sim.scenario import (
+    Scenario,
+    TerrainSpec,
+    build_terrain,
+    load_scenario,
+    scenario_from_dict,
+)
 
 __all__ = ["Settings", "create_app"]
 
@@ -73,6 +84,18 @@ class RunRequest(BaseModel):
     scenario: dict[str, Any]
 
 
+class CoverageRequest(BaseModel):
+    """A sensor spec, the scenario's terrain (or none), and heights above the site's ground."""
+
+    sensor: dict[str, Any]
+    terrain: dict[str, Any] | None = None
+    heights_m: list[float] = [300.0, 1500.0, 3000.0]
+
+
+def _validation_detail(exc: ValidationError) -> Any:
+    return json.loads(exc.json(include_url=False, include_context=False))
+
+
 def _run_row(record: RunRecord) -> dict[str, Any]:
     m = record.manifest
     trackers = [
@@ -100,7 +123,12 @@ def create_app(settings: Settings) -> FastAPI:
         yield
         jobs.shutdown()
 
+    replays = RunDataCache()
+    terrains: dict[str, ElevationModel] = {}
+
     app = FastAPI(title="tracking-sim", version=tracking_sim.__version__, lifespan=lifespan)
+    # Replay data is a few megabytes of numbers; it compresses about 5x.
+    app.add_middleware(GZipMiddleware, minimum_size=4096)
     app.state.settings = settings
     app.state.store = store
     app.state.jobs = jobs
@@ -152,14 +180,70 @@ def create_app(settings: Settings) -> FastAPI:
         record = find_run(run_id)
         return {**_run_row(record), "manifest": record.manifest, "metrics": record.metrics}
 
+    def run_data(run_id: str) -> RunData:
+        return replays.get(find_run(run_id))
+
+    @app.get("/api/runs/{run_id}/truth")
+    def run_truth(run_id: str, step_s: float = 5.0) -> dict[str, Any]:
+        if not 0.5 <= step_s <= 60:
+            raise HTTPException(422, "step_s must be between 0.5 and 60")
+        try:
+            return run_data(run_id).truth(step_s)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @app.get("/api/runs/{run_id}/detections")
+    def run_detections(run_id: str) -> dict[str, Any]:
+        return run_data(run_id).detections()
+
+    @app.get("/api/runs/{run_id}/tracks/{tracker_id}")
+    def run_tracks(run_id: str, tracker_id: str, tentative: bool = False) -> dict[str, Any]:
+        try:
+            return run_data(run_id).tracks(tracker_id, tentative=tentative)
+        except KeyError:
+            raise HTTPException(404, f"run {run_id} has no tracker {tracker_id!r}") from None
+
+    def terrain_for(spec: TerrainSpec | None, lat: float, lon: float, range_m: float) -> Any:
+        if spec is None:
+            return None
+        if spec.source != "copernicus":
+            return build_terrain(spec, [])
+        from tracking_sim.geo.copernicus import area_around
+
+        # Tiles are large: keep only the latest area (a dragged sensor stays in it).
+        key = json.dumps([spec.resolution_m, area_around([(lat, lon, range_m)])])
+        if key not in terrains:
+            terrains.clear()
+            terrains[key] = build_terrain(spec, [(lat, lon, range_m)])
+        return terrains[key]
+
+    @app.post("/api/coverage")
+    def sensor_coverage(request: CoverageRequest) -> dict[str, Any]:
+        try:
+            sensor = parse_sensor_spec(request.sensor)
+            terrain_spec = (
+                None if request.terrain is None else TerrainSpec.model_validate(request.terrain)
+            )
+        except ValidationError as exc:
+            raise HTTPException(422, _validation_detail(exc)) from None
+        if not request.heights_m or len(request.heights_m) > 8:
+            raise HTTPException(422, "give between one and eight heights")
+        pos = sensor.position
+        try:
+            terrain = terrain_for(terrain_spec, pos.lat, pos.lon, sensor.coverage.range_max_m)
+        except ImportError:
+            raise HTTPException(422, "copernicus terrain needs the terrain extra") from None
+        except OSError as exc:
+            raise HTTPException(503, f"terrain: {exc}") from None
+        return coverage(sensor, request.heights_m, terrain=terrain)
+
     @app.post("/api/runs", status_code=202)
     def start_run(request: RunRequest) -> dict[str, Any]:
         try:
             scenario = scenario_from_dict(request.scenario, root)
             job = jobs.submit(scenario)
         except ValidationError as exc:
-            detail = json.loads(exc.json(include_url=False, include_context=False))
-            raise HTTPException(422, detail) from None
+            raise HTTPException(422, _validation_detail(exc)) from None
         except (ValueError, OSError) as exc:
             raise HTTPException(422, str(exc)) from None
         return job.as_dict()

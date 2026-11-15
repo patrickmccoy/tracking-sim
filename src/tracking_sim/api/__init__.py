@@ -4,16 +4,20 @@
 a run store; ``tracking-sim serve`` runs it with uvicorn and serves the
 built map UI from ``web/dist``. Everything is under ``/api``:
 
-==============================  =============================================
-``GET /api/scenarios``          scenario files in the scenarios directory
-``GET /api/scenarios/{key}``    one scenario, every sensor and tracker inline
-``GET /api/runs``               stored runs, oldest first, with headline scores
-``GET /api/runs/{id}``          one run's manifest and metrics
-``POST /api/runs``              run a scenario in the background: a job
-``GET /api/jobs``               jobs since the server started, newest first
-``GET /api/jobs/{id}``          one job: queued, running (and its stage),
-                                done or failed
-==============================  =============================================
+* ``GET /scenarios``: scenario files in the scenarios directory.
+* ``GET /scenarios/{key}``: one scenario, every sensor and tracker inline.
+* ``GET /runs``: stored runs, oldest first, with headline scores.
+* ``GET /runs/{id}``: one run's manifest and metrics.
+* ``GET /runs/{id}/truth``: truth over the run, sampled every ``step_s``.
+* ``GET /runs/{id}/detections``: every detection, by time.
+* ``GET /runs/{id}/tracks/{tracker}``: one tracker's tracks.
+* ``POST /runs``: run a scenario in the background; returns a job.
+* ``GET /jobs`` and ``GET /jobs/{id}``: queued, running (with the stage),
+  done or failed.
+* ``POST /coverage``: a sensor's coverage at given heights, as GeoJSON.
+
+Replay data is in latitude and longitude, one array per field
+(``api.replay``).
 
 The server is for one person on their own machine: it has no accounts and
 ``serve`` listens on 127.0.0.1 unless told otherwise.

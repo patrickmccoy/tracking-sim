@@ -59,6 +59,8 @@ __all__ = [
     "Scenario",
     "ScenarioResult",
     "ScenarioSpec",
+    "TerrainSpec",
+    "build_terrain",
     "load_scenario",
     "load_truth",
     "run_scenario",
@@ -150,6 +152,23 @@ class ScenarioSpec(_Spec):
     metrics: MetricsSpec = Field(default_factory=MetricsSpec)
 
 
+def build_terrain(spec: TerrainSpec, reach: list[tuple[float, float, float]]) -> ElevationModel:
+    """The terrain ``spec`` describes, covering sensors at ``(lat, lon, range_m)``.
+
+    Only ``copernicus`` depends on ``reach``: it loads (downloading once)
+    the tiles around every sensor.
+    """
+    if spec.source == "flat":
+        return FlatTerrain(spec.height_m)
+    if spec.source == "synthetic":
+        assert spec.ridge is not None
+        return SyntheticRidge(**spec.ridge.model_dump())
+    from tracking_sim.geo.copernicus import area_around, load_area
+
+    model: ElevationModel = load_area(*area_around(reach), resolution_m=spec.resolution_m)
+    return model
+
+
 @dataclass
 class Scenario:
     """A scenario with its referenced files loaded."""
@@ -166,18 +185,9 @@ class Scenario:
         if t is None:
             return None
         if self._terrain is None:
-            if t.source == "flat":
-                self._terrain = FlatTerrain(t.height_m)
-            elif t.source == "synthetic":
-                assert t.ridge is not None
-                self._terrain = SyntheticRidge(**t.ridge.model_dump())
-            else:
-                from tracking_sim.geo.copernicus import area_around, load_area
-
-                box = area_around(
-                    [(s.position.lat, s.position.lon, s.coverage.range_max_m) for s in self.sensors]
-                )
-                self._terrain = load_area(*box, resolution_m=t.resolution_m)
+            self._terrain = build_terrain(
+                t, [(s.position.lat, s.position.lon, s.coverage.range_max_m) for s in self.sensors]
+            )
         model: ElevationModel = self._terrain
         return model
 

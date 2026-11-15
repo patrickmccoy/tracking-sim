@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 __all__ = ["GATES", "Crossing", "GroundSensor", "ScanResult"]
 
 FloatArray = NDArray[np.float64]
+BoolArray = NDArray[np.bool_]
 IntArray = NDArray[np.int64]
 
 # Gate names, in the order they are checked.
@@ -242,14 +243,19 @@ class GroundSensor:
             for i in range(len(times))
         ]
 
-    def _gates(
+    def gate_checks(
         self,
         az: FloatArray,
         el: FloatArray,
         rng: FloatArray,
         ground: FloatArray,
         height: FloatArray,
-    ) -> list[str | None]:
+    ) -> tuple[BoolArray, ...]:
+        """One mask per entry of ``GATES``: True where a point passes that check.
+
+        Points are given as compass azimuth and elevation (radians), slant
+        and ground range (metres) and height above the site's ground.
+        """
         cov = self.spec.coverage
         ok_range = (rng >= cov.range_min_m) & (rng <= cov.range_max_m)
         if cov.full_circle:
@@ -269,7 +275,18 @@ class GroundSensor:
             ok_terrain = ~self.terrain.masked(az, ground, height)
         else:
             ok_terrain = np.ones_like(az, dtype=bool)
-        checks = (ok_range, ok_az, ok_el, ok_horizon, ok_terrain)
+        return ok_range, ok_az, ok_el, ok_horizon, ok_terrain
+
+    def _gates(
+        self,
+        az: FloatArray,
+        el: FloatArray,
+        rng: FloatArray,
+        ground: FloatArray,
+        height: FloatArray,
+    ) -> list[str | None]:
+        """The first check each point fails, or None where it passes them all."""
+        checks = self.gate_checks(az, el, rng, ground, height)
         result: list[str | None] = []
         for i in range(len(az)):
             result.append(
