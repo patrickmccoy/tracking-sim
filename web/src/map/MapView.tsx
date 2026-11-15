@@ -50,13 +50,18 @@ export function MapView({ styleUrl, center, zoom = 8, children, onReady, classNa
     });
     m.addControl(new NavigationControl({ showCompass: true }), "top-right");
     m.addControl(new ScaleControl({ unit: "metric" }), "bottom-right");
+    let loaded = false;
     m.on("load", () => {
+      loaded = true;
       setMap(m);
       onReady?.(m);
     });
     m.on("error", (e) => {
-      // A missing tile is routine; a style that fails to load is not.
-      if (!m.isStyleLoaded()) setError((e.error as Error | undefined)?.message ?? "map error");
+      const message = (e.error as Error | undefined)?.message ?? "map error";
+      // Only a base map that never loads is worth a banner; later errors
+      // (a missing tile, a bad layer) go to the console.
+      if (!loaded) setError(message);
+      else console.warn("map:", message);
     });
     return () => {
       setMap(null);

@@ -19,7 +19,8 @@ function styleFont(map: MlMap): string[] | undefined {
   return undefined;
 }
 
-type LayerDef = Omit<LayerSpecification & { source?: unknown }, "source">;
+// Omit `source` from each kind of layer, keeping each kind's own fields.
+type LayerDef = LayerSpecification extends infer L ? (L extends unknown ? Omit<L, "source"> : never) : never;
 
 interface GeoJsonLayerProps {
   id: string;
@@ -29,7 +30,7 @@ interface GeoJsonLayerProps {
   /** Draw below this existing layer (default: on top). */
   before?: string;
   visible?: boolean;
-  /** A filter applied to every layer (in addition to none of their own). */
+  /** A filter applied to every layer, together with each layer's own. */
   filter?: FilterSpecification;
   onClick?: (feature: GeoJSON.Feature, event: MapLayerMouseEvent) => void;
 }
@@ -71,25 +72,33 @@ export function GeoJsonLayer({ id, data, layers, before, visible = true, filter,
       }
       if (map.getSource(id)) map.removeSource(id);
     };
-    // Layer specs are fixed per id; data and visibility update below.
+    // Added once per id; data, paint, filters and visibility update below.
   }, [map, id]);
 
   useEffect(() => {
     (map.getSource(id) as GeoJSONSource | undefined)?.setData(data);
   }, [map, id, data]);
 
+  // Paint, layout and filters follow the props: a selection highlight or a
+  // colour per tracker is part of a layer's spec.
+  const specKey = JSON.stringify([layers, filter ?? null, visible]);
+  const applied = useRef<string | null>(null);
   useEffect(() => {
     for (const layer of layers) {
-      if (map.getLayer(layer.id)) map.setLayoutProperty(layer.id, "visibility", visible ? "visible" : "none");
+      if (!map.getLayer(layer.id)) continue;
+      const own = (layer as { filter?: FilterSpecification }).filter;
+      const combined = own && filter ? (["all", own, filter] as FilterSpecification) : (own ?? filter ?? null);
+      map.setFilter(layer.id, combined);
+      map.setLayoutProperty(layer.id, "visibility", visible ? "visible" : "none");
+      if (applied.current === null) continue; // just added with these values
+      const paint = (layer as { paint?: Record<string, unknown> }).paint ?? {};
+      for (const [name, value] of Object.entries(paint)) {
+        type Paint = Parameters<MlMap["setPaintProperty"]>;
+        map.setPaintProperty(layer.id, name as Paint[1], value as Paint[2]);
+      }
     }
-  }, [map, visible]);
-
-  const filterKey = JSON.stringify(filter ?? null);
-  useEffect(() => {
-    for (const layer of layers) {
-      if (map.getLayer(layer.id)) map.setFilter(layer.id, filter ?? null);
-    }
-  }, [map, filterKey]);
+    applied.current = specKey;
+  }, [map, specKey]);
 
   return null;
 }

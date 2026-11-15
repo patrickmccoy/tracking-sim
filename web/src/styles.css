@@ -392,7 +392,7 @@ button.danger:hover:not(:disabled) {
 
 .legend {
   left: 12px;
-  bottom: 12px;
+  top: 12px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -411,7 +411,7 @@ button.danger:hover:not(:disabled) {
 
 .map-hint {
   position: absolute;
-  z-index: 2;
+  z-index: 3;
   top: 12px;
   left: 50%;
   transform: translateX(-50%);
@@ -461,4 +461,123 @@ button.danger:hover:not(:disabled) {
     0 0 3px #fcfcfb,
     0 0 3px #fcfcfb;
   white-space: nowrap;
+}
+
+.wide {
+  width: 100%;
+}
+
+.status {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.runs li {
+  margin-bottom: 4px;
+}
+
+.run-best {
+  display: block;
+  padding: 0 8px;
+}
+
+.scores {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.scores th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 4px;
+}
+
+.scores td {
+  padding: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.scores tr {
+  cursor: pointer;
+}
+
+.scores tr.active td {
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
+.scores .num {
+  text-align: right;
+}
+
+.swatch.truth {
+  height: 3px;
+  background: #52514e;
+}
+
+.swatch.track {
+  background: #fcfcfb;
+  border: 2.5px solid #eb6834;
+  border-radius: 50%;
+}
+
+.swatch.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.swatch.detection {
+  background: #2a78d6;
+}
+
+.swatch.clutter {
+  background: #a3a29c;
+}
+
+.timebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface-1);
+  border-top: 1px solid var(--border);
+}
+
+.timebar .play {
+  width: 38px;
+}
+
+.timebar .clock {
+  font: 600 13px var(--mono);
+  white-space: nowrap;
+}
+
+.timebar .slider {
+  flex: 1;
+  min-width: 80px;
+  padding: 0;
+  border: none;
+  background: none;
+}
+
+.timebar .elapsed {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 760px) {
+  .timebar {
+    flex-wrap: wrap;
+  }
+
+  .timebar .slider {
+    order: 10;
+    flex-basis: 100%;
+  }
 }

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type Config, type ScenarioDoc, type ScenarioEntry, type ScenarioResponse, type SensorSpec } from "./api";
 import { CoverageLegend } from "./components/CoverageLegend";
+import { ReplaySidebar } from "./components/ReplaySidebar";
+import { RunPanel } from "./components/RunPanel";
 import { ScenarioPanel } from "./components/ScenarioPanel";
 import { SensorForm } from "./components/SensorForm";
 import { CoverageLayer } from "./map/CoverageLayer";
@@ -8,10 +10,23 @@ import { MapClick } from "./map/MapClick";
 import { MapView } from "./map/MapView";
 import { SensorMarkers } from "./map/SensorMarkers";
 import { useCoverage } from "./map/useCoverage";
+import { ReplayLayers, type LayerOptions, type Selection } from "./replay/ReplayLayers";
+import { TimeBar } from "./replay/TimeBar";
+import { useClock } from "./replay/useClock";
+import { useReplayData } from "./replay/useReplayData";
 import { newSensor } from "./scenario/templates";
-import { coverageSteps } from "./theme";
+import { colors, coverageSteps } from "./theme";
 
 type SensorType = SensorSpec["type"];
+
+/** One scan of the first radar: the replay's step. */
+function scanPeriod(sensors: SensorSpec[]): number {
+  for (const s of sensors) {
+    const period = (s.scan as { period_s?: number } | undefined)?.period_s;
+    if (typeof period === "number") return period;
+  }
+  return 5;
+}
 
 export function App() {
   const [config, setConfig] = useState<Config | null>(null);
@@ -24,6 +39,18 @@ export function App() {
   const [heights, setHeights] = useState(coverageSteps.map((s) => s.height_m));
   const [showCoverage, setShowCoverage] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Replay: the open run, the tracker shown, and what is drawn.
+  const [runId, setRunId] = useState<string | null>(null);
+  const [tracker, setTracker] = useState<string | null>(null);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [layerOptions, setLayerOptions] = useState<LayerOptions>({
+    truth: true,
+    targets: true,
+    clutter: false,
+    tracks: true,
+    trailS: 120,
+    persistS: 5,
+  });
 
   useEffect(() => {
     Promise.all([api.config(), api.scenarios()])
@@ -52,11 +79,43 @@ export function App() {
     if (key) load(key);
   }, [key, load]);
 
+  const openRun = (id: string) => {
+    setRunId(id);
+    setPlacing(null);
+    setShowCoverage(false);
+  };
+
+  const replay = useReplayData(runId, tracker ? [tracker] : []);
+  const runScenario = replay.detail?.manifest.scenario ?? null;
+  const window = replay.truth?.window ?? null;
+  const clock = useClock(window);
+  useEffect(() => {
+    setSelection(null);
+    setTracker(null);
+  }, [runId]);
+  useEffect(() => {
+    if (replay.detail && !tracker) setTracker(replay.detail.metrics.trackers[0]?.tracker ?? null);
+  }, [replay.detail, tracker]);
+
+  /** The open run's scenario, as the editor holds one (its truth path is absolute). */
+  const editRun = () => {
+    if (!runScenario || !runId) return;
+    const { frame, truth_path, ...rest } = runScenario as typeof runScenario & { truth_path: string };
+    const doc = { ...rest, truth: { ...rest.truth, path: truth_path } } as ScenarioDoc;
+    setLoaded({ key: `run:${runId}`, scenario: doc, frame });
+    setDraft(structuredClone(doc));
+    setKey(null);
+    setSelected(null);
+    setRunId(null);
+  };
+
   const dirty = useMemo(
     () => !!loaded && !!draft && JSON.stringify(loaded.scenario) !== JSON.stringify(draft),
     [loaded, draft],
   );
-  const coverage = useCoverage(draft?.sensors ?? [], draft?.terrain ?? null);
+  const replaying = runId !== null;
+  const mapSensors = replaying ? (runScenario?.sensors ?? []) : (draft?.sensors ?? []);
+  const coverage = useCoverage(mapSensors, (replaying ? runScenario?.terrain : draft?.terrain) ?? null);
 
   const updateSensor = (index: number, sensor: SensorSpec) =>
     setDraft((d) => d && { ...d, sensors: d.sensors.map((s, i) => (i === index ? sensor : s)) });
@@ -131,7 +190,8 @@ export function App() {
         <h1>tracking-sim</h1>
         <label className="field inline">
           <span>Scenario</span>
-          <select value={key ?? ""} onChange={(e) => setKey(e.target.value)}>
+          <select value={key ?? ""} onChange={(e) => setKey(e.target.value)} disabled={replaying}>
+            {key === null && <option value="">{loaded?.key.startsWith("run:") ? `from run ${loaded.key.slice(4, 30)}…` : "…"}</option>}
             {scenarios.map((s) => (
               <option key={s.key} value={s.key}>
                 {s.name}
@@ -139,7 +199,7 @@ export function App() {
             ))}
           </select>
         </label>
-        {dirty && <span className="badge">edited</span>}
+        {replaying ? <span className="badge">replay</span> : dirty && <span className="badge">edited</span>}
         {config && <span className="muted version">v{config.version}</span>}
       </header>
       <aside className="sidebar">
@@ -148,15 +208,34 @@ export function App() {
             {error} <button className="link" onClick={() => setError(null)}>dismiss</button>
           </p>
         )}
-        {draft && loaded && (
+        {replaying && replay.error && <p className="error">{replay.error}</p>}
+        {replaying && replay.loading && <p className="muted" role="status">Loading {replay.loading}…</p>}
+        {replaying && replay.detail && tracker && (
+          <ReplaySidebar
+            detail={replay.detail}
+            tracker={tracker}
+            onTracker={setTracker}
+            options={layerOptions}
+            onOptions={setLayerOptions}
+            selection={selection}
+            truth={replay.truth}
+            tracks={replay.tracks}
+            t={clock.t}
+            onClose={() => setRunId(null)}
+            onEdit={editRun}
+          />
+        )}
+        {!replaying && draft && loaded && (
           <>
+            <h2>Run</h2>
+            <RunPanel draft={draft} canRun={radars > 0 || draft.trackers.length === 0} onOpen={openRun} />
             <h2>Scenario</h2>
             <ScenarioPanel
               draft={draft}
               allTrackers={loaded.scenario.trackers}
               dirty={dirty}
               onChange={setDraft}
-              onReset={() => key && load(key)}
+              onReset={() => (key ? load(key) : loaded.key.startsWith("run:") && setDraft(structuredClone(loaded.scenario)))}
               onSave={save}
             />
             <h2>Sensors</h2>
@@ -201,12 +280,40 @@ export function App() {
       </aside>
       <main className="main">
         {config && loaded && draft && (
-          <MapView styleUrl={config.map_style} center={[loaded.frame.lon, loaded.frame.lat]} zoom={8}>
-            <CoverageLayer data={coverage.collection} heights={heights} visible={showCoverage} sensorId={sensor?.id ?? null} />
-            <SensorMarkers sensors={draft.sensors} selected={selected} onMove={moveSensor} onSelect={setSelected} />
-            {placing && <MapClick onClick={place} cursor="crosshair" />}
+          <MapView
+            styleUrl={config.map_style}
+            center={replaying && runScenario ? [runScenario.frame.lon, runScenario.frame.lat] : [loaded.frame.lon, loaded.frame.lat]}
+            zoom={8}
+          >
+            <CoverageLayer
+              data={coverage.collection}
+              heights={heights}
+              visible={showCoverage}
+              sensorId={replaying ? null : (sensor?.id ?? null)}
+            />
+            {replaying && (
+              <ReplayLayers
+                truth={replay.truth}
+                detections={replay.detections}
+                tracks={tracker ? [{ tracker, data: replay.tracks[tracker], color: colors.trackA }] : []}
+                t={clock.t}
+                options={layerOptions}
+                selection={selection}
+                onSelect={setSelection}
+              />
+            )}
+            <SensorMarkers
+              key={replaying ? `run-${runId}` : "edit"}
+              sensors={mapSensors}
+              selected={replaying ? null : selected}
+              onMove={moveSensor}
+              onSelect={replaying ? () => undefined : setSelected}
+              draggable={!replaying}
+            />
+            {placing && !replaying && <MapClick onClick={place} cursor="crosshair" />}
           </MapView>
         )}
+        {replaying && window && <TimeBar clock={clock} window={window} stepS={scanPeriod(runScenario?.sensors ?? [])} />}
         {placing && (
           <div className="map-hint">
             Click the map to place the {placing === "rotating_radar_2d" ? "radar" : "passive sensor"}.{" "}
@@ -217,7 +324,7 @@ export function App() {
         )}
         {draft && (
           <CoverageLegend
-            sensorId={sensor?.id ?? null}
+            sensorId={replaying ? null : (sensor?.id ?? null)}
             heights={heights}
             visible={showCoverage}
             busy={coverage.busy}
