@@ -165,6 +165,8 @@ def build_tracker(spec: TrackerSpec, *, seed: int = 0) -> TrackerPipeline:
     have none). Each draw is seeded from it and from the content it is for,
     so the result does not depend on the order Stone Soup visits tracks.
     """
+    if spec.association.probabilistic:
+        raise NotImplementedError(f"association {spec.association.method!r} is not wired up yet")
     layout = LAYOUT_7D if spec.ndim_state == 7 else LAYOUT_6D
 
     # Tentative tracks: an EKF with the tracker's own state layout.

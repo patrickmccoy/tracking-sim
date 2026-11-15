@@ -223,7 +223,7 @@ The tracker's state is `[x, vx, y, vy, z, vz]` in the scenario's local frame, pl
 | `filter` | required | `ekf` (extended Kalman), `ukf` (unscented Kalman), or `particle_mm` (multiple-model particle filter). |
 | `motion` | constant velocity | How targets are assumed to move (below). |
 | `particles` | `count: 1000` | `particle_mm` only: `count`, the particles per confirmed track (at least 50). |
-| `association` | `gnn`, gate `3.0` | Which detection goes to which track (below). |
+| `association` | `gnn`, gate `3.0` | Which detections update which track (below). |
 | `initiation` | below | How tracks start and are confirmed. |
 | `deletion` | `missed_scans` `3` | `missed_scans`: drop a confirmed track after this many scans in a row without a detection. |
 
@@ -245,28 +245,33 @@ The tracker's state is `[x, vx, y, vy, z, vz]` in the scenario's local frame, pl
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `method` | `gnn` | The only method implemented, so far: **global nearest neighbour**. |
-| `gate` | `3.0` | Mahalanobis distance: how many standard deviations a detection may be from a track's predicted measurement and still be assigned to it. |
+| `method` | `gnn` | `gnn` (global nearest neighbour), `pda` (probabilistic data association) or `jpda` (joint PDA). `pda` and `jpda` need `filter: ekf` or `ukf`. |
+| `gate` | `3.0` | Mahalanobis distance, for every method: how many standard deviations a detection may be from a track's predicted measurement and still count for it. |
+| `prob_detect` | from the radar | `pda`/`jpda` only: a fixed probability of detection instead of the radar's. |
+| `clutter_density` | from the radar | `pda`/`jpda` only: fixed false alarms per radian of bearing per metre of range per scan, instead of the radar's. |
 
-Each scan, every track is predicted to each detection's time. A detection is a candidate for a track when its Mahalanobis distance is under `gate`. The distance is measured in (bearing, slant range), using the track's predicted uncertainty plus the radar's noise. GNN then makes the one-to-one assignment of detections to tracks with the smallest total distance. "No detection" counts as a distance of `gate`, so a track takes a detection only when it beats that. Detections left over start tentative tracks.
+Each scan, every track is predicted to the time of the detections near it. A detection is a candidate for a track when its Mahalanobis distance is under `gate`. The distance is measured in (bearing, slant range), using the track's predicted uncertainty plus the radar's noise. What happens next depends on the method:
 
-The same association, with the same gate, also runs among tentative tracks while they are being confirmed.
+- **`gnn`** makes the one-to-one assignment of detections to tracks with the smallest total distance. "No detection" counts as a distance of `gate`, so a track takes a detection only when it beats that. A track gets one detection or none.
+- **`pda`** doesn't choose. It weighs every candidate by how likely it is to be the aircraft's, against the chance that none is: from the distance, the radar's probability of detection and how much clutter to expect there. The track is updated with the weighted blend, and its uncertainty grows to cover the doubt. Each track is weighed on its own, so two tracks close together can both lean on the same detection.
+- **`jpda`** weighs the joint possibilities across tracks that share candidates, so each detection is shared out consistently. It uses Stone Soup's `JPDAwithEHM`, which gives exact JPDA answers faster.
+
+For `pda` and `jpda`, `gate` becomes the probability that the aircraft's own detection falls inside it (1 − e^(−gate²/2) for a 2D measurement: 3 is 98.9%, 4 is 99.97%). Unless `prob_detect` and `clutter_density` are set, both come from the scenario's radar for each track at its predicted range:
+- **Clutter:** false alarms are spread evenly over ground area, so in (bearing, range) their density is `false_alarm_density` × range.
+- **Probability of detection:** `pd` for a `constant` detection model; for `radar_equation`, the radar's Pd at that range for a `default_class` aircraft, since a tracker can't know each aircraft's size.
+
+Detections left over start tentative tracks. Under `pda` and `jpda`, that means detections no track weighed above "no detection". Tentative tracks are always matched to new detections with `gnn` and the same gate while they are being confirmed.
 
 Choosing a gate:
-- Raising it keeps tracks through manoeuvres and missed scans, but lets clutter and crossing aircraft steal more updates.
+- Raising it keeps tracks through manoeuvres and missed scans, but lets clutter and crossing aircraft steal more updates (`gnn`) or blur more of them in (`pda`, `jpda`).
 - Lowering it does the reverse.
-- For a 2D measurement, a gate of 3 keeps about 99% of a track's true detections, if the track's uncertainty is right.
+- With `gnn`, a gate of 3 keeps about 99% of a track's true detections, if the track's uncertainty is right.
+- A constant-velocity track lags a turning aircraft by more than its uncertainty admits, so `pda` and `jpda` usually want a wider gate.
 - Process noise widens the gate too, because a noisier motion model predicts with more uncertainty. That is why `pf-mm-gnn-q50` associates more false alarms (DECISIONS.md, D33).
 
 Before the exact test, a cheap geometric pre-gate drops detections that are plainly out of reach. Its box is 2 km, plus 3 sigma of the track's position, plus 400 m/s times the time since the track's last update. It changes speed, not results (D21).
 
-Other association methods are not tracker options yet. These are global nearest neighbour's alternatives in Stone Soup:
-- nearest neighbour;
-- probabilistic data association (PDA);
-- joint PDA (JPDA);
-- multi-frame assignment (MFA).
-
-Notebook 05 builds each of them step by step on the same data.
+Nearest neighbour and multi-frame assignment (MFA) are not tracker options. Notebook 05 builds them, PDA and JPDA step by step on the same data.
 
 *Model: `AssociationSpec`; wired in `tracking_sim.tracking.factory`.*
 

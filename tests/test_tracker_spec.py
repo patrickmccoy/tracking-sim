@@ -43,6 +43,22 @@ def test_defaults() -> None:
     assert spec.initiation.min_points == 3 and spec.initiation.assumed_height_m == 5000
     assert spec.deletion.missed_scans == 3
     assert parse_tracker_spec({"id": "p", "filter": "particle_mm", "motion": {"model": "cv_ct"}})
+    assert spec.association.method == "gnn" and not spec.association.probabilistic
+
+
+def test_probabilistic_association() -> None:
+    spec = parse_tracker_spec(
+        {"id": "t", "filter": "ukf", "association": {"method": "jpda", "gate": 4.5}}
+    )
+    assert spec.association.probabilistic and spec.association.prob_detect is None
+    fixed = parse_tracker_spec(
+        {
+            "id": "t",
+            "filter": "ekf",
+            "association": {"method": "pda", "prob_detect": 0.8, "clutter_density": 1e-6},
+        }
+    )
+    assert fixed.association.prob_detect == 0.8
 
 
 @pytest.mark.parametrize(
@@ -53,7 +69,15 @@ def test_defaults() -> None:
         {"id": "t", "filter": "ekf", "motion": {"model": "cv_ct"}},
         {"id": "t", "filter": "ekf", "particles": {"count": 500}},
         {"id": "t", "filter": "ekf", "initiation": {"min_points": 1}},
-        {"id": "t", "filter": "ekf", "association": {"method": "jpda"}},
+        {"id": "t", "filter": "ekf", "association": {"method": "mht"}},
+        {"id": "t", "filter": "ekf", "association": {"method": "gnn", "prob_detect": 0.9}},
+        {"id": "t", "filter": "ekf", "association": {"method": "pda", "prob_detect": 1.5}},
+        {
+            "id": "t",
+            "filter": "particle_mm",
+            "motion": {"model": "cv_ct"},
+            "association": {"method": "jpda"},
+        },
         {"id": "t", "filter": "ekf", "deletion": {"missed": 3}},  # unknown field
         {"id": "", "filter": "ekf"},
     ],

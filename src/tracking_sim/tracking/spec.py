@@ -68,10 +68,46 @@ class ParticleSpec(_Spec):
 
 
 class AssociationSpec(_Spec):
-    """Global nearest neighbour association with a Mahalanobis gate."""
+    """How detections are assigned to tracks each scan.
 
-    method: Literal["gnn"] = "gnn"
+    ``gnn`` (global nearest neighbour) gives each track at most one
+    detection, the one-to-one assignment with the smallest total
+    Mahalanobis distance. ``pda`` (probabilistic data association) updates
+    a track with every detection in its gate, weighted by how likely each is
+    to be the aircraft's, including the chance that none is; ``jpda`` (joint
+    PDA) weighs those chances jointly across tracks competing for the same
+    detections.
+
+    ``gate`` is a Mahalanobis distance in standard deviations for every
+    method; PDA and JPDA turn it into the probability that the aircraft's
+    own detection falls inside it. They also need the radar's probability
+    of detection and its false-alarm density in (bearing, slant range).
+    Both come from the scenario's radar spec, per track at its predicted
+    range; ``prob_detect`` and ``clutter_density`` (false alarms per radian
+    per metre per scan) fix them instead.
+    """
+
+    method: Literal["gnn", "pda", "jpda"] = "gnn"
     gate: float = Field(3.0, gt=0, description="Mahalanobis distance beyond which no association")
+    prob_detect: float | None = Field(
+        None, gt=0, le=1, description="pda/jpda: fixed Pd instead of the radar's"
+    )
+    clutter_density: float | None = Field(
+        None, gt=0, description="pda/jpda: fixed false alarms per rad per m per scan"
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> AssociationSpec:
+        if self.method == "gnn" and (
+            self.prob_detect is not None or self.clutter_density is not None
+        ):
+            raise ValueError("'prob_detect' and 'clutter_density' apply to pda and jpda only")
+        return self
+
+    @property
+    def probabilistic(self) -> bool:
+        """True for PDA and JPDA, which blend detections in a mixture tracker."""
+        return self.method != "gnn"
 
 
 class InitiationSpec(_Spec):
@@ -121,6 +157,10 @@ class TrackerSpec(_Spec):
             raise ValueError("motion 'cv_ct' is a multiple-model set: use filter 'particle_mm'")
         if not multi and self.particles is not None:
             raise ValueError("'particles' only applies to filter 'particle_mm'")
+        if multi and self.association.probabilistic:
+            # The mixture tracker merges each scan's outcomes into one
+            # Gaussian, which would collapse the particle cloud.
+            raise ValueError(f"association {self.association.method!r} needs filter 'ekf' or 'ukf'")
         return self
 
     @property
