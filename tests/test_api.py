@@ -55,8 +55,9 @@ def client(workspace: Path) -> TestClient:
     return TestClient(app)
 
 
-def test_health(client: TestClient) -> None:
+def test_health_and_config(client: TestClient) -> None:
     assert client.get("/api/health").json()["ok"] is True
+    assert client.get("/api/config").json()["map_style"].startswith("https://")
 
 
 def test_scenarios_are_the_top_level_files(client: TestClient) -> None:

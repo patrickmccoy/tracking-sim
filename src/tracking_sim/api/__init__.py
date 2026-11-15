@@ -4,6 +4,7 @@
 a run store; ``tracking-sim serve`` runs it with uvicorn and serves the
 built map UI from ``web/dist``. Everything is under ``/api``:
 
+* ``GET /config``: the base map style and the package version.
 * ``GET /scenarios``: scenario files in the scenarios directory.
 * ``GET /scenarios/{key}``: one scenario, every sensor and tracker inline.
 * ``GET /runs``: stored runs, oldest first, with headline scores.

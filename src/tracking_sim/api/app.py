@@ -35,13 +35,22 @@ from tracking_sim.sim.scenario import (
 __all__ = ["Settings", "create_app"]
 
 
+# OpenFreeMap's vector tiles: free, no key, OpenStreetMap data.
+DEFAULT_MAP_STYLE = "https://tiles.openfreemap.org/styles/positron"
+
+
 @dataclass(frozen=True)
 class Settings:
-    """Where the app finds scenarios, runs and the built UI."""
+    """Where the app finds scenarios, runs and the built UI.
+
+    ``map_style`` is the MapLibre style URL the UI loads its base map from;
+    the browser fetches the tiles itself.
+    """
 
     scenarios_dir: Path
     runs_dir: Path
     web_dir: Path | None = None
+    map_style: str = DEFAULT_MAP_STYLE
 
 
 def _relative(path: Path, root: Path) -> str:
@@ -148,6 +157,10 @@ def create_app(settings: Settings) -> FastAPI:
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         return {"ok": True, "version": tracking_sim.__version__}
+
+    @app.get("/api/config")
+    def config() -> dict[str, Any]:
+        return {"map_style": settings.map_style, "version": tracking_sim.__version__}
 
     @app.get("/api/scenarios")
     def list_scenarios() -> list[dict[str, Any]]:

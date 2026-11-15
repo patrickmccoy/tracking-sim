@@ -15,6 +15,7 @@ Variable                        Used for
 ``TRACKING_SIM_SCENARIOS``      Scenario directory for ``serve`` (default ``scenarios``)
 ``TRACKING_SIM_HOST``           Address ``serve`` listens on (default 127.0.0.1)
 ``TRACKING_SIM_PORT``           Port ``serve`` listens on (default 8000)
+``TRACKING_SIM_MAP_STYLE``      MapLibre style URL for the map's base layer
 ==============================  =======================================
 """
 
@@ -27,6 +28,7 @@ import logging
 import os
 import sys
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -307,7 +309,10 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             f"no built UI in {web} (cd web && npm ci && npm run build); serving the API only",
             file=sys.stderr,
         )
-    app = create_app(Settings(scenarios_dir=args.scenarios, runs_dir=args.runs, web_dir=web))
+    settings = Settings(scenarios_dir=args.scenarios, runs_dir=args.runs, web_dir=web)
+    if args.map_style:
+        settings = replace(settings, map_style=args.map_style)
+    app = create_app(settings)
     print(f"tracking-sim on http://{args.host}:{args.port}", file=sys.stderr)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
@@ -444,6 +449,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default=_env("TRACKING_SIM_HOST", "127.0.0.1"))
     serve.add_argument("--port", type=int, default=int(_env("TRACKING_SIM_PORT", "8000") or 8000))
     serve.add_argument("--web", type=Path, help="built UI directory (default: web/dist)")
+    serve.add_argument(
+        "--map-style",
+        default=_env("TRACKING_SIM_MAP_STYLE"),
+        help="MapLibre style URL for the base map (default: OpenFreeMap positron)",
+    )
     serve.set_defaults(func=_cmd_serve)
 
     info = commands.add_parser("info", help="summarize recording files")
