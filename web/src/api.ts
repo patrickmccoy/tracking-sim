@@ -214,7 +214,7 @@ export const api = {
   startRun: (scenario: ScenarioDoc) => post<Job>("/runs", { scenario }),
   job: (id: string) => request<Job>(`/jobs/${encodeURIComponent(id)}`),
   elevation: (terrain: Record<string, unknown> | null, points: [number, number][]) =>
-    post<{ heights_m: (number | null)[] }>("/elevation", { terrain, points }),
+    post<{ heights_m: (number | null)[]; source: string | null }>("/elevation", { terrain, points }),
   exportScenario: async (scenario: ScenarioDoc): Promise<Blob> => {
     const response = await fetch("/api/scenarios/export", {
       method: "POST",

@@ -20,6 +20,9 @@ from tracking_sim.truth.synthetic import ReceiverConfig, generate_traffic
 ROOT = Path(__file__).resolve().parents[1]
 
 
+GROUND = {"source": "flat", "height_m": 1600}
+
+
 @pytest.fixture(scope="module")
 def workspace(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A scenarios directory with one small scenario, and a run store holding its run."""
@@ -51,7 +54,14 @@ def workspace(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture
 def client(workspace: Path) -> TestClient:
-    app = create_app(Settings(scenarios_dir=workspace / "scenarios", runs_dir=workspace / "runs"))
+    # Flat ground stands in for the Copernicus ground terrain: no network in tests.
+    app = create_app(
+        Settings(
+            scenarios_dir=workspace / "scenarios",
+            runs_dir=workspace / "runs",
+            ground_terrain=GROUND,
+        )
+    )
     return TestClient(app)
 
 
@@ -193,7 +203,7 @@ def test_coverage_for_a_dragged_sensor(client: TestClient) -> None:
     assert client.post("/api/coverage", json={"sensor": sensor, "heights_m": []}).status_code == 422
 
 
-def test_elevation_comes_from_the_scenario_terrain(client: TestClient) -> None:
+def test_elevation_comes_from_the_scenario_or_ground_terrain(client: TestClient) -> None:
     ridge = {
         "source": "synthetic",
         "ridge": {"lat": 39.9, "lon": -105.2, "height_m": 900, "base_m": 1700},
@@ -202,9 +212,20 @@ def test_elevation_comes_from_the_scenario_terrain(client: TestClient) -> None:
     body = client.post("/api/elevation", json={"terrain": ridge, "points": points}).json()
     top, plain = body["heights_m"]
     assert top == pytest.approx(2600, abs=1) and plain == pytest.approx(1700, abs=1)
+    assert body["source"] == "scenario:synthetic"
+    # Without scenario terrain, the server's ground terrain answers.
     none = client.post("/api/elevation", json={"terrain": None, "points": points}).json()
-    assert none == {"heights_m": [None, None]}
+    assert none == {"heights_m": [1600.0, 1600.0], "source": "ground:flat"}
     assert client.post("/api/elevation", json={"points": []}).status_code == 422
+
+
+def test_elevation_without_any_terrain_is_null(workspace: Path) -> None:
+    settings = Settings(
+        scenarios_dir=workspace / "scenarios", runs_dir=workspace / "runs", ground_terrain=None
+    )
+    client = TestClient(create_app(settings))
+    body = client.post("/api/elevation", json={"terrain": None, "points": [[39.9, -105]]}).json()
+    assert body == {"heights_m": [None], "source": None}
 
 
 def test_an_edited_scenario_exports_as_yaml(client: TestClient, workspace: Path) -> None:

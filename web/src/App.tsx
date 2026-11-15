@@ -149,11 +149,13 @@ export function App() {
   const updateSensor = (index: number, sensor: SensorSpec) =>
     setDraft((d) => d && { ...d, sensors: d.sensors.map((s, i) => (i === index ? sensor : s)) });
 
-  // The ground under a moved or dropped sensor, when the scenario has terrain.
+  // The ground under a moved or dropped sensor: the scenario's terrain if it
+  // has some, else the server's terrain map (Copernicus DEM). The height is
+  // kept as it was when neither is available.
   const groundUnder = async (index: number, lat: number, lon: number) => {
-    if (!draft?.terrain) return;
+    if (!draft) return;
     try {
-      const { heights_m } = await api.elevation(draft.terrain, [[lat, lon]]);
+      const { heights_m } = await api.elevation(draft.terrain ?? null, [[lat, lon]]);
       const h = heights_m[0];
       if (h === null || h === undefined) return;
       setDraft(

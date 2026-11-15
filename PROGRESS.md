@@ -351,8 +351,10 @@ Not done, for later:
   file. Editing tracker parameters is likewise left to the YAML files.
 - Truth is rebuilt for each run opened (about 2 s for the synthetic hour,
   cached for the last four runs); a long capture will take longer.
-- A dropped sensor's ground height comes from the terrain when the scenario
-  has some; without terrain it copies the template's, so edit it by hand.
+- ~~A dropped sensor's ground height comes from the terrain when the
+  scenario has some; without terrain it copies the template's.~~ Done
+  after the milestone: without scenario terrain it comes from Copernicus
+  GLO-90 (D40).
 
 ## Next: milestone 6, live and multi-sensor
 

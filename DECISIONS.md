@@ -602,3 +602,15 @@ as YAML** downloads the edited scenario (validated, written by the server
 so it matches the hand-written files) for you to keep in `scenarios/`.
 A drafts directory the server writes to was the alternative; it would be a
 second place for scenarios to live, and nothing needed it yet.
+
+## D40. A placed sensor's ground height from a terrain map
+
+Dropping or dragging a sensor sets its ground height from the scenario's
+terrain when it has some, since that is the ground the simulator's
+line-of-sight checks use. Without scenario terrain the server answers from
+its own ground terrain, Copernicus GLO-90 by default (`Settings.ground_terrain`),
+so a sensor dropped in the mountains doesn't keep a plains height. This only
+sets a number in the sensor spec: the scenario still runs on a smooth earth
+unless it names terrain. When the ground terrain is unavailable (no
+`terrain` extra, no network) `/api/elevation` returns nulls and the UI keeps
+the height it had. The elevation response says which terrain answered.

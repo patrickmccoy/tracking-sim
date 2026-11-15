@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -41,19 +42,30 @@ __all__ = ["Settings", "create_app"]
 # OpenFreeMap's vector tiles: free, no key, OpenStreetMap data.
 DEFAULT_MAP_STYLE = "https://tiles.openfreemap.org/styles/positron"
 
+# Ground heights for sensors in scenarios without terrain: Copernicus GLO-90,
+# downloaded once per 1-degree tile into the terrain cache.
+DEFAULT_GROUND_TERRAIN: dict[str, Any] = {"source": "copernicus", "resolution_m": 90}
+
+log = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class Settings:
     """Where the app finds scenarios, runs and the built UI.
 
     ``map_style`` is the MapLibre style URL the UI loads its base map from;
-    the browser fetches the tiles itself.
+    the browser fetches the tiles itself. ``ground_terrain`` (a terrain
+    spec) gives a placed sensor its ground height when the scenario has no
+    terrain of its own; ``None`` leaves the height to the user.
     """
 
     scenarios_dir: Path
     runs_dir: Path
     web_dir: Path | None = None
     map_style: str = DEFAULT_MAP_STYLE
+    ground_terrain: dict[str, Any] | None = field(
+        default_factory=lambda: dict(DEFAULT_GROUND_TERRAIN)
+    )
 
 
 def _relative(path: Path, root: Path) -> str:
@@ -236,7 +248,9 @@ def create_app(settings: Settings) -> FastAPI:
         # Tiles are large: keep only the latest area (a dragged sensor stays in it).
         key = json.dumps([spec.resolution_m, area_around([(lat, lon, range_m)])])
         if key not in terrains:
-            terrains.clear()
+            # Two areas: a scenario's coverage area and the ground lookups.
+            while len(terrains) >= 2:
+                terrains.pop(next(iter(terrains)))
             terrains[key] = build_terrain(spec, [(lat, lon, range_m)])
         return terrains[key]
 
@@ -260,27 +274,51 @@ def create_app(settings: Settings) -> FastAPI:
             raise HTTPException(503, f"terrain: {exc}") from None
         return coverage(sensor, request.heights_m, terrain=terrain)
 
+    ground_spec = (
+        None
+        if settings.ground_terrain is None
+        else TerrainSpec.model_validate(settings.ground_terrain)
+    )
+
     @app.post("/api/elevation")
     def elevation(request: ElevationRequest) -> dict[str, Any]:
-        """Terrain height at each point, or nulls when the scenario has no terrain."""
+        """Ground height at each point, and where it came from.
+
+        The scenario's terrain when it has some (what the simulator uses);
+        otherwise the server's ground terrain (Copernicus GLO-90 by
+        default), or nulls when that is unavailable (no ``terrain`` extra,
+        no network) so the UI keeps the height it had.
+        """
         if not 0 < len(request.points) <= 1000:
             raise HTTPException(422, "give between 1 and 1000 points")
         try:
             spec = None if request.terrain is None else TerrainSpec.model_validate(request.terrain)
         except ValidationError as exc:
             raise HTTPException(422, _validation_detail(exc)) from None
+        source = "scenario"
         if spec is None:
-            return {"heights_m": [None] * len(request.points)}
+            spec, source = ground_spec, "ground"
+        nothing = {"heights_m": [None] * len(request.points), "source": None}
+        if spec is None:
+            return nothing
         lat, lon = (np.array(v, dtype=float) for v in zip(*request.points, strict=True))
         try:
             # A small reach: copernicus then loads only the tiles under the points.
             terrain = terrain_for(spec, float(lat.mean()), float(lon.mean()), 1000.0)
         except ImportError:
+            if source == "ground":
+                return nothing
             raise HTTPException(422, "copernicus terrain needs the terrain extra") from None
         except OSError as exc:
+            if source == "ground":
+                log.warning("ground terrain unavailable: %s", exc)
+                return nothing
             raise HTTPException(503, f"terrain: {exc}") from None
         heights = np.asarray(terrain.height(lat, lon), dtype=float)
-        return {"heights_m": [None if np.isnan(h) else round(float(h), 1) for h in heights]}
+        return {
+            "heights_m": [None if np.isnan(h) else round(float(h), 1) for h in heights],
+            "source": f"{source}:{spec.source}",
+        }
 
     @app.post("/api/scenarios/export")
     def export_scenario(request: RunRequest) -> Response:
