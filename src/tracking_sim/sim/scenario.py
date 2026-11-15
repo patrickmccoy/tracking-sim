@@ -61,6 +61,8 @@ __all__ = [
     "load_scenario",
     "load_truth",
     "run_scenario",
+    "scenario_from_dict",
+    "scenario_from_resolved",
 ]
 
 log = logging.getLogger(__name__)
@@ -275,8 +277,13 @@ class Scenario:
 def load_scenario(path: str | Path) -> Scenario:
     """Load a scenario file and the sensor and tracker specs it names."""
     path = Path(path)
-    spec = ScenarioSpec.model_validate(load_yaml(path) or {})
-    base = path.parent
+    return scenario_from_dict(load_yaml(path) or {}, path.parent)
+
+
+def scenario_from_dict(data: Any, base_dir: str | Path) -> Scenario:
+    """A scenario from its parsed form, with paths relative to ``base_dir``."""
+    spec = ScenarioSpec.model_validate(data)
+    base = Path(base_dir)
     sensors = [
         load_sensor_spec(base / item) if isinstance(item, str) else parse_sensor_spec(item)
         for item in spec.sensors
@@ -289,6 +296,23 @@ def load_scenario(path: str | Path) -> Scenario:
         if len(set(ids)) != len(ids):
             raise ValueError(f"{kind} ids must be unique: {ids}")
     return Scenario(spec=spec, base_dir=base, sensors=sensors, trackers=trackers)
+
+
+def scenario_from_resolved(resolved: dict[str, Any]) -> Scenario:
+    """The scenario a stored run ran, from its ``Scenario.resolved()`` form.
+
+    Its paths were relative to its scenario file; the resolved truth path is
+    absolute, so this works from anywhere. Aircraft classes are dropped: they
+    only shaped Pd, which a stored run's detections already reflect.
+    """
+    data = {k: v for k, v in resolved.items() if k not in ("truth_path", "frame")}
+    data["truth"] = {**data["truth"], "path": resolved["truth_path"], "aircraft_classes": None}
+    return Scenario(
+        spec=ScenarioSpec.model_validate(data),
+        base_dir=Path(resolved["truth_path"]).parent,
+        sensors=[parse_sensor_spec(s) for s in resolved["sensors"]],
+        trackers=[parse_tracker_spec(t) for t in resolved["trackers"]],
+    )
 
 
 @dataclass

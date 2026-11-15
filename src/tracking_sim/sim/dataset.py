@@ -47,7 +47,7 @@ from stonesoup.types.update import Update
 
 from tracking_sim.eval.metrics import MetricSettings, TrackerScore, score_tracks
 from tracking_sim.eval.scoring import ScoringGrid, grid_from_looks
-from tracking_sim.sensors import RotatingRadar2DSpec, parse_sensor_spec
+from tracking_sim.sensors import RotatingRadar2DSpec
 from tracking_sim.sensors.base import GroundSensor
 from tracking_sim.sensors.measurement import bearing_to_compass
 from tracking_sim.sim.engine import ReplayEngine, SimulationResult
@@ -486,28 +486,14 @@ def load_run(
     the run's trackers saw; the radar is not simulated again.
     """
     from tracking_sim.eval.runstore import RunStore, input_digest
-    from tracking_sim.sim.scenario import Scenario, ScenarioSpec, load_truth
-    from tracking_sim.tracking import parse_tracker_spec
+    from tracking_sim.sim.scenario import load_truth, scenario_from_resolved
 
     path = Path(run)
     if not (path / "manifest.json").exists():
         path = RunStore(store).get(str(run)).path
     manifest = json.loads((path / "manifest.json").read_text())
     resolved = yaml.safe_load((path / "scenario.resolved.yaml").read_text())
-    spec_data = {k: v for k, v in resolved.items() if k not in ("truth_path", "frame")}
-    # The run's paths were relative to its scenario file; the resolved one is absolute.
-    # (Aircraft classes only shaped Pd, which the stored detections already reflect.)
-    spec_data["truth"] = {
-        **spec_data["truth"],
-        "path": resolved["truth_path"],
-        "aircraft_classes": None,
-    }
-    scenario = Scenario(
-        spec=ScenarioSpec.model_validate(spec_data),
-        base_dir=path,
-        sensors=[parse_sensor_spec(s) for s in resolved["sensors"]],
-        trackers=[parse_tracker_spec(t) for t in resolved["trackers"]],
-    )
+    scenario = scenario_from_resolved(resolved)
     digest = input_digest(scenario.truth_path)
     if digest != manifest["inputs"]["truth"]:
         raise ValueError(f"{scenario.truth_path} has changed since run {manifest['id']}")

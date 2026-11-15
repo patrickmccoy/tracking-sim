@@ -12,6 +12,9 @@ Variable                        Used for
 ``TRACKING_SIM_RECEIVER``       Receiver name used in ``source_id``
 ``TRACKING_SIM_RUNS``           Run store directory (default ``runs``)
 ``TRACKING_SIM_AIRCRAFT_JSON``  URL of aircraft.json for ``record aircraft-json``
+``TRACKING_SIM_SCENARIOS``      Scenario directory for ``serve`` (default ``scenarios``)
+``TRACKING_SIM_HOST``           Address ``serve`` listens on (default 127.0.0.1)
+``TRACKING_SIM_PORT``           Port ``serve`` listens on (default 8000)
 ==============================  =======================================
 """
 
@@ -285,6 +288,31 @@ def _cmd_runs_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _default_web_dir() -> Path:
+    # A source checkout: <repo>/src/tracking_sim/cli.py -> <repo>/web/dist.
+    return Path(__file__).resolve().parents[2] / "web" / "dist"
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+
+        from tracking_sim.api.app import Settings, create_app
+    except ImportError:
+        print("serve needs the api extra: uv sync --extra api", file=sys.stderr)
+        return 2
+    web = args.web or _default_web_dir()
+    if not (web / "index.html").exists():
+        print(
+            f"no built UI in {web} (cd web && npm ci && npm run build); serving the API only",
+            file=sys.stderr,
+        )
+    app = create_app(Settings(scenarios_dir=args.scenarios, runs_dir=args.runs, web_dir=web))
+    print(f"tracking-sim on http://{args.host}:{args.port}", file=sys.stderr)
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    return 0
+
+
 def _cmd_info(args: argparse.Namespace) -> int:
     start = parse_time(args.start) if args.start else None
     end = parse_time(args.end) if args.end else None
@@ -404,6 +432,19 @@ def build_parser() -> argparse.ArgumentParser:
     runs_compare.add_argument("b", help="run id or prefix")
     _add_runs_option(runs_compare)
     runs_compare.set_defaults(func=_cmd_runs_compare)
+
+    serve = commands.add_parser("serve", help="run the map playground (needs the api extra)")
+    serve.add_argument(
+        "--scenarios",
+        type=Path,
+        default=Path(_env("TRACKING_SIM_SCENARIOS", "scenarios") or "scenarios"),
+        help="scenario directory (default: scenarios, or TRACKING_SIM_SCENARIOS)",
+    )
+    _add_runs_option(serve)
+    serve.add_argument("--host", default=_env("TRACKING_SIM_HOST", "127.0.0.1"))
+    serve.add_argument("--port", type=int, default=int(_env("TRACKING_SIM_PORT", "8000") or 8000))
+    serve.add_argument("--web", type=Path, help="built UI directory (default: web/dist)")
+    serve.set_defaults(func=_cmd_serve)
 
     info = commands.add_parser("info", help="summarize recording files")
     info.add_argument("paths", nargs="+", help="recording files, directories or globs")
